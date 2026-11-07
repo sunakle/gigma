@@ -25,12 +25,23 @@ import {
   type Bounds,
   type Point,
 } from "./core/geometry";
-import { nodeSVG, exportBounds } from "./core/svg";
+import { usePrefs, preferences } from "./core/preferences";
+import { fitText } from "./core/text-layout";
+import { pressureFactor } from "./core/brush";
+import { removeNodes } from "./core/geometry";
+import { nodeSVG, exportBounds, effectDefs } from "./core/svg";
 import { studio } from "./core/studio";
 
-export type Tool = "select" | "pan" | Exclude<Kind, "image" | "group">;
+export type Tool =
+  | "select"
+  | "pan"
+  | "picker"
+  | "eraser"
+  | "direct"
+  | Exclude<Kind, "image" | "group">;
 type Gesture = {
-  type: "draw" | "move" | "resize" | "marquee" | "pan";
+  type: "draw" | "move" | "resize" | "marquee" | "pan" | "erase" | "edit";
+  pointerId: number;
   start: Point;
   client: Point;
   view: DesignPage["view"];
@@ -39,7 +50,7 @@ type Gesture = {
   box?: Bounds;
   handle?: string;
   id?: string;
-  points: Point[];
+  points: DesignNode["points"];
 };
 const boxBetween = (a: Point, b: Point): Bounds => ({
   x: Math.min(a.x, b.x),
@@ -83,10 +94,12 @@ export function Scene({
   nodes,
   activate,
   prefix = "canvas",
+  editingId = null,
 }: {
   nodes: DesignNode[];
   activate?: (id: string) => void;
   prefix?: string;
+  editingId?: string | null;
 }) {
   const children = new Map<string | null, DesignNode[]>();
   for (const n of nodes) {
@@ -108,10 +121,37 @@ export function Scene({
               }
             : undefined
         }
-        style={activate && n.linkTo ? { cursor: "pointer" } : undefined}
+        style={{
+          mixBlendMode: n.blend ?? "normal",
+          cursor: activate && n.linkTo ? "pointer" : undefined,
+        }}
+        filter={n.adjustments?.length ? "url(#fx-" + clip + ")" : undefined}
         opacity={container(n) ? n.opacity : undefined}
       >
-        {n.kind !== "group" && (
+        {n.adjustments?.length ? (
+          <g
+            dangerouslySetInnerHTML={{ __html: effectDefs(n, "fx-" + clip) }}
+          />
+        ) : null}
+        {n.kind === "text" && prefix === "canvas" && (
+          <rect
+            x={n.x}
+            y={n.y}
+            width={n.width}
+            height={n.height}
+            fill="transparent"
+            transform={
+              "rotate(" +
+              n.rotation +
+              " " +
+              (n.x + n.width / 2) +
+              " " +
+              (n.y + n.height / 2) +
+              ")"
+            }
+          />
+        )}
+        {n.id !== editingId && n.kind !== "group" && (
           <g
             dangerouslySetInnerHTML={{
               __html: nodeSVG(n.kind === "frame" ? { ...n, opacity: 1 } : n),
@@ -145,14 +185,14 @@ export function Scene({
   }
   return <>{children.get(null)?.map(draw)}</>;
 }
-function updatePath(n: DesignNode, points: Point[]) {
+function updatePath(n: DesignNode, points: DesignNode["points"]) {
   const xs = points.map((p) => p.x),
     ys = points.map((p) => p.y);
   n.x = Math.min(...xs);
   n.y = Math.min(...ys);
   n.width = Math.max(1, Math.max(...xs) - n.x);
   n.height = Math.max(1, Math.max(...ys) - n.y);
-  n.points = points.map((p) => ({ x: p.x - n.x, y: p.y - n.y }));
+  n.points = points.map((p) => ({ ...p, x: p.x - n.x, y: p.y - n.y }));
 }
 const handles: Record<string, [number, number]> = {
   nw: [0, 0],
@@ -177,6 +217,8 @@ export function Canvas({
   space: boolean;
   grid: boolean;
 }) {
+  const prefs = usePrefs();
+  const lastTextTap = useRef({ id: "", time: 0, x: 0, y: 0 });
   const svg = useRef<SVGSVGElement>(null),
     g = useRef<Gesture | null>(null);
   const [marquee, setMarquee] = useState<Bounds | null>(null);
@@ -218,9 +260,9 @@ export function Canvas({
   function hit(
     e: ReactPointer<SVGSVGElement> | React.MouseEvent<SVGSVGElement>,
   ) {
-    const id = (e.target as Element)
-      .closest("[data-object]")
-      ?.getAttribute("data-object");
+    const target =
+      document.elementFromPoint(e.clientX, e.clientY) ?? (e.target as Element);
+    const id = target.closest("[data-object]")?.getAttribute("data-object");
     return page.nodes.find((n) => n.id === id);
   }
   function down(e: ReactPointer<SVGSVGElement>) {
@@ -231,6 +273,7 @@ export function Canvas({
     const client = { x: e.clientX, y: e.clientY },
       start = screenToWorld(client, svg.current!.getBoundingClientRect(), v);
     const base: Gesture = {
+      pointerId: e.pointerId,
       type: "pan",
       start,
       client,
@@ -244,7 +287,46 @@ export function Canvas({
       g.current = base;
       return;
     }
-    if (tool === "select") {
+    const targetNode = hit(e);
+    if (tool === "picker") {
+      const c =
+        targetNode &&
+        (targetNode.fill !== "none" ? targetNode.fill : targetNode.stroke);
+      if (c && c !== "none") preferences({ foreground: c });
+      return;
+    }
+    if (tool === "eraser") {
+      studio.begin("Ластик");
+      g.current = { ...base, type: "erase" };
+      erase(e);
+      return;
+    }
+    if (
+      targetNode?.kind === "text" &&
+      !inherited(page.nodes, targetNode, "locked") &&
+      (tool === "text" ||
+        ((tool === "select" || tool === "direct") &&
+          lastTextTap.current.id === targetNode.id &&
+          performance.now() - lastTextTap.current.time < 480 &&
+          Math.hypot(
+            e.clientX - lastTextTap.current.x,
+            e.clientY - lastTextTap.current.y,
+          ) < 6))
+    ) {
+      e.preventDefault();
+      studio.select([targetNode.id]);
+      setTool("select");
+      g.current = { ...base, type: "edit", id: targetNode.id };
+      lastTextTap.current.id = "";
+      return;
+    }
+    lastTextTap.current = {
+      id: targetNode?.id ?? "",
+      time: performance.now(),
+      x: e.clientX,
+      y: e.clientY,
+    };
+    if (tool === "select" || tool === "direct") {
       const handle = (e.target as Element).getAttribute("data-handle");
       if (handle && box) {
         studio.begin("Изменить размер");
@@ -259,9 +341,9 @@ export function Canvas({
       }
       let n = hit(e);
       if (n && inherited(page.nodes, n, "locked")) n = undefined;
-      if (n && !e.ctrlKey && !e.metaKey) {
+      if (n && tool !== "direct" && !e.ctrlKey && !e.metaKey) {
         let parent = page.nodes.find((p) => p.id === n!.parentId);
-        while (parent?.kind === "group") {
+        while (parent?.kind === "group" && !parent.artLayer) {
           n = parent;
           parent = page.nodes.find((p) => p.id === parent!.parentId);
         }
@@ -293,7 +375,29 @@ export function Canvas({
       }
       return;
     }
+    if (prefs.snap && tool !== "path") {
+      start.x = Math.round(start.x / prefs.gridSize) * prefs.gridSize;
+      start.y = Math.round(start.y / prefs.gridSize) * prefs.gridSize;
+    }
     const n = newNode(tool, start.x, start.y, 1, 1);
+    if (["rect", "polygon", "ellipse", "text"].includes(tool))
+      n.fill = prefs.foreground;
+    if (tool === "frame") n.fill = prefs.background;
+    if (tool === "polygon") n.sides = prefs.sides;
+    if (tool === "line" || tool === "arrow" || tool === "path")
+      n.stroke = prefs.foreground;
+    if (tool === "path") {
+      n.strokeWidth = prefs.size;
+      n.opacity = prefs.opacity;
+      if (e.pointerType === "pen" && prefs.pressure)
+        base.points = [
+          {
+            ...start,
+            pressure: pressureFactor(e.pressure, prefs.minimum, prefs.curve),
+          },
+        ];
+    }
+    if (tool === "text") n.textLayout = "auto";
     const frame = [...page.nodes]
       .reverse()
       .find(
@@ -303,27 +407,56 @@ export function Canvas({
           !inherited(page.nodes, f, "hidden") &&
           contains(bounds(f), start),
       );
-    if (frame && tool !== "frame") n.parentId = frame.id;
+    let active = page.nodes.find((o) => o.id === selected[0]);
+    while (active && !active.artLayer)
+      active = active.parentId
+        ? page.nodes.find((o) => o.id === active!.parentId)
+        : undefined;
+    if (tool !== "frame") {
+      if (
+        active &&
+        !inherited(page.nodes, active, "locked") &&
+        !inherited(page.nodes, active, "hidden")
+      )
+        n.parentId = active.id;
+      else if (frame) n.parentId = frame.id;
+    }
     if (tool === "text") {
       n.width = 220;
       n.height = 36;
     }
     if (tool === "path" || tool === "line" || tool === "arrow")
-      n.points = [{ x: 0, y: 0 }];
+      n.points = [{ ...base.points[0], x: 0, y: 0 }];
     studio.begin("Создать " + n.name.toLowerCase());
     page.nodes.push(n);
     studio.select([n.id]);
     g.current = { ...base, type: "draw", id: n.id };
   }
+  function erase(e: ReactPointer<SVGSVGElement>) {
+    const n = hit(e);
+    if (n && !container(n) && !inherited(page.nodes, n, "locked")) {
+      removeNodes(studio.document!, page, [n.id]);
+      studio.select([]);
+    }
+  }
   function move(e: ReactPointer<SVGSVGElement>) {
     const a = g.current;
-    if (!a) return;
+    if (!a || a.pointerId !== e.pointerId) return;
+    if (a.type === "edit") return;
+    if (a.type === "erase") {
+      erase(e);
+      return;
+    }
     const client = { x: e.clientX, y: e.clientY };
     const at = screenToWorld(
       client,
       svg.current!.getBoundingClientRect(),
       a.view,
     );
+    if (prefs.snap && a.type === "draw" && tool !== "path") {
+      at.x = Math.round(at.x / prefs.gridSize) * prefs.gridSize;
+      at.y = Math.round(at.y / prefs.gridSize) * prefs.gridSize;
+    }
     let dx = at.x - a.start.x,
       dy = at.y - a.start.y;
     if (a.type === "pan") {
@@ -342,6 +475,13 @@ export function Canvas({
         if (e.shiftKey) {
           if (Math.abs(dx) > Math.abs(dy)) dy = 0;
           else dx = 0;
+        }
+        if (prefs.snap) {
+          const b = selectionBounds(a.original, a.selected);
+          if (b) {
+            dx = Math.round((b.x + dx) / prefs.gridSize) * prefs.gridSize - b.x;
+            dy = Math.round((b.y + dy) / prefs.gridSize) * prefs.gridSize - b.y;
+          }
         }
         moveNodes(page.nodes, a.selected, dx, dy);
       } else {
@@ -369,20 +509,52 @@ export function Canvas({
           a.selected.length === 1
             ? page.nodes.find((n) => n.id === a.selected[0])
             : null;
+        if (single?.kind === "text" && h.length === 2) {
+          const sx = target.width / b.width,
+            sy = target.height / b.height;
+          const ratio = Math.max(
+            6 / single.fontSize,
+            Math.min(
+              1000 / single.fontSize,
+              Math.abs(sx - 1) > Math.abs(sy - 1) ? sx : sy,
+            ),
+          );
+          target.width = b.width * ratio;
+          target.height = b.height * ratio;
+          target.x = h.includes("w") ? b.x + b.width - target.width : b.x;
+          target.y = h.includes("n") ? b.y + b.height - target.height : b.y;
+        }
         if (single?.kind === "frame") Object.assign(single, target);
-        else resizeNodes(page.nodes, a.selected, b, target);
+        else {
+          if (single?.kind === "text" && (h === "e" || h === "w"))
+            single.textLayout = "wrap";
+          resizeNodes(page.nodes, a.selected, b, target);
+        }
       }
     } else {
       const n = page.nodes.find((n) => n.id === a.id)!;
       if (n.kind === "path") {
-        if (
-          a.points.length < 20000 &&
-          Math.hypot(at.x - a.points.at(-1)!.x, at.y - a.points.at(-1)!.y) >
-            0.6 / v.zoom
-        ) {
-          a.points.push(at);
-          updatePath(n, a.points);
+        const batch = e.nativeEvent.getCoalescedEvents?.() ?? [];
+        const rect = svg.current!.getBoundingClientRect();
+        for (const sample of batch.length ? batch : [e.nativeEvent]) {
+          if (a.points.length >= 20000) break;
+          const p = screenToWorld(
+              { x: sample.clientX, y: sample.clientY },
+              rect,
+              a.view,
+            ),
+            prev = a.points.at(-1)!;
+          if (Math.hypot(p.x - prev.x, p.y - prev.y) < 0.25 / v.zoom) continue;
+          a.points.push({
+            x: p.x * (1 - prefs.smoothing) + prev.x * prefs.smoothing,
+            y: p.y * (1 - prefs.smoothing) + prev.y * prefs.smoothing,
+            pressure:
+              sample.pointerType === "pen" && prefs.pressure
+                ? pressureFactor(sample.pressure, prefs.minimum, prefs.curve)
+                : undefined,
+          });
         }
+        updatePath(n, a.points);
       } else if (n.kind === "line" || n.kind === "arrow")
         updatePath(n, [a.start, at]);
       else if (n.kind !== "text") {
@@ -398,7 +570,14 @@ export function Canvas({
   }
   function up(e: ReactPointer<SVGSVGElement>) {
     const a = g.current;
-    if (!a) return;
+    if (!a || a.pointerId !== e.pointerId) return;
+    if (a.type === "edit") {
+      g.current = null;
+      if (svg.current?.hasPointerCapture(e.pointerId))
+        svg.current.releasePointerCapture(e.pointerId);
+      setEditing(a.id!);
+      return;
+    }
     if (a.type === "marquee") {
       const at = screenToWorld(
           { x: e.clientX, y: e.clientY },
@@ -431,11 +610,12 @@ export function Canvas({
         if (n.width < 3 && n.height < 3) {
           if (["line", "arrow"].includes(n.kind))
             updatePath(n, [a.start, { x: a.start.x + 120, y: a.start.y }]);
-          else if (n.kind === "path")
+          else if (n.kind === "path" && a.points.length === 1)
             updatePath(n, [
-              a.start,
-              { x: a.start.x + 0.1, y: a.start.y + 0.1 },
+              a.points[0],
+              { ...a.points[0], x: a.start.x + 0.01 },
             ]);
+          else if (n.kind === "path") updatePath(n, a.points);
           else {
             n.width = n.kind === "frame" ? 400 : 120;
             n.height = n.kind === "frame" ? 300 : 100;
@@ -452,6 +632,15 @@ export function Canvas({
   }
   return (
     <main className="stage" data-stage>
+      {prefs.wallpaper && (
+        <div
+          className="wallpaper"
+          style={{
+            backgroundImage: "url(" + prefs.wallpaper + ")",
+            opacity: prefs.wallpaperOpacity,
+          }}
+        />
+      )}
       <svg
         ref={svg}
         className={"surface tool-" + (space ? "pan" : tool)}
@@ -470,8 +659,8 @@ export function Canvas({
           <defs>
             <pattern
               id="dots"
-              width={Math.max(6, 16 * v.zoom)}
-              height={Math.max(6, 16 * v.zoom)}
+              width={Math.max(6, prefs.gridSize * v.zoom)}
+              height={Math.max(6, prefs.gridSize * v.zoom)}
               x={v.x}
               y={v.y}
               patternUnits="userSpaceOnUse"
@@ -505,7 +694,7 @@ export function Canvas({
                 {n.name}
               </text>
             ))}
-          <Scene nodes={page.nodes} />
+          <Scene nodes={page.nodes} editingId={editing} />
           {box && (
             <g className="selection">
               <rect
@@ -554,19 +743,32 @@ export function Canvas({
           style={{
             left: v.x + editNode.x * v.zoom,
             top: v.y + editNode.y * v.zoom,
-            width: Math.max(120, editNode.width * v.zoom),
+            width: Math.max(60, editNode.width * v.zoom + 4),
             height: Math.max(50, editNode.height * v.zoom),
             fontSize: editNode.fontSize * v.zoom,
-            fontFamily: editNode.fontFamily,
+            fontFamily: editNode.fontFamily + ",sans-serif",
+            fontWeight: editNode.fontWeight,
+            textAlign: editNode.textAlign,
+            lineHeight: "1.3",
+            color: editNode.fill === "none" ? "inherit" : editNode.fill,
+            transform: "rotate(" + editNode.rotation + "deg)",
+            whiteSpace: editNode.textLayout === "wrap" ? "pre-wrap" : "pre",
+          }}
+          onInput={(e) => {
+            const el = e.currentTarget;
+            if (editNode.textLayout !== "wrap") {
+              el.style.width = "12px";
+              el.style.width = Math.max(60, el.scrollWidth + 6) + "px";
+            }
+            el.style.height = "1px";
+            el.style.height = Math.max(30, el.scrollHeight + 4) + "px";
           }}
           onBlur={(e) => {
             const value = e.currentTarget.value;
             studio.mutate("Изменить текст", () => {
               editNode.text = value;
-              editNode.height = Math.max(
-                editNode.height,
-                value.split("\n").length * editNode.fontSize * 1.3,
-              );
+              editNode.textLayout ??= "auto";
+              fitText(editNode);
             });
             setEditing(null);
           }}
@@ -575,12 +777,6 @@ export function Canvas({
               e.currentTarget.blur();
           }}
         />
-      )}
-      {!page.nodes.length && (
-        <div className="canvas-hint">
-          <strong>Чистый холст</strong>
-          <span>Нажмите R и потяните, чтобы нарисовать фигуру</span>
-        </div>
       )}
     </main>
   );

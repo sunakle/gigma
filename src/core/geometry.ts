@@ -5,6 +5,7 @@ import {
   type DesignPage,
   type DesignDocument,
 } from "../../shared/model";
+import { fitText } from "./text-layout";
 export type Point = { x: number; y: number };
 export type Bounds = Point & { width: number; height: number };
 export const container = (n: DesignNode) =>
@@ -108,7 +109,12 @@ export function resizeNodes(
       n.y = to.y + (n.y - from.y) * sy;
       n.width = Math.max(1, n.width * sx);
       n.height = Math.max(1, n.height * sy);
-      n.points = n.points.map((p) => ({ x: p.x * sx, y: p.y * sy }));
+      n.points = n.points.map((p) => ({ ...p, x: p.x * sx, y: p.y * sy }));
+      if (n.kind === "text") {
+        n.fontSize = Math.max(6, Math.min(1000, n.fontSize * sy));
+        n.textLayout ??= "wrap";
+        fitText(n);
+      }
     }
 }
 export function refreshGroups(nodes: DesignNode[]) {

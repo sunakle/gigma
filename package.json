@@ -1,6 +1,6 @@
 {
   "name": "gigma",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Локальный редактор дизайна и визуальных документов",
   "author": "sunakle",
@@ -51,7 +51,8 @@
     ],
     "win": {
       "target": "portable",
-      "signAndEditExecutable": false,
+      "icon": "public/gigma.ico",
+      "signExecutable": false,
       "artifactName": "Gigma-${version}-Windows-x64.${ext}"
     },
     "portable": {

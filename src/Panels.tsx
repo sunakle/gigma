@@ -1,3 +1,6 @@
+import { ColorPanel, Adjustments, LayerControls } from "./ArtPanels";
+import { BrushPanel } from "./Settings";
+import { fitText } from "./core/text-layout";
 import { useState } from "react";
 import {
   AlignHorizontalJustifyCenter,
@@ -28,7 +31,12 @@ import {
   Type,
   UnlockKeyhole,
 } from "lucide-react";
-import { newPage, type DesignNode, type DesignPage } from "../shared/model";
+import {
+  newNode,
+  newPage,
+  type DesignNode,
+  type DesignPage,
+} from "../shared/model";
 import {
   alignNodes,
   autoLayout,
@@ -49,6 +57,7 @@ const icons = {
   text: Type,
   image: Image,
   group: Group,
+  polygon: Diamond,
 };
 export function Field({
   label,
@@ -105,6 +114,7 @@ export function LayersPanel({ page }: { page: DesignPage }) {
     if (!s.delete(id)) s.add(id);
     setFold(s);
   }
+  const [filter, setFilter] = useState("all");
   function order(dir: number) {
     const id = studio.selection[0],
       index = page.nodes.findIndex((n) => n.id === id);
@@ -124,6 +134,7 @@ export function LayersPanel({ page }: { page: DesignPage }) {
       .filter((n) => n.parentId === id)
       .reverse()
       .map((n) => {
+        if (filter !== "all" && n.kind !== filter && !container(n)) return null;
         const Icon = icons[n.kind],
           has = page.nodes.some((c) => c.parentId === n.id),
           closed = fold.has(n.id);
@@ -165,7 +176,11 @@ export function LayersPanel({ page }: { page: DesignPage }) {
                   );
                 }}
               >
-                <Icon />
+                {n.kind === "image" ? (
+                  <img className="layer-thumb" alt="" src={n.image} />
+                ) : (
+                  <Icon />
+                )}
                 {n.name}
               </button>
               <button
@@ -242,6 +257,26 @@ export function LayersPanel({ page }: { page: DesignPage }) {
         </span>
         <div>
           <button
+            title="Новый слой"
+            onClick={() => {
+              const layer = newNode("group", 0, 0, 1, 1);
+              layer.artLayer = true;
+              layer.name =
+                "Слой " + (page.nodes.filter((n) => n.artLayer).length + 1);
+              const current = page.nodes.find((n) =>
+                studio.selection.includes(n.id),
+              );
+              layer.parentId =
+                current?.kind === "frame"
+                  ? current.id
+                  : (current?.parentId ?? null);
+              studio.mutate("Создать слой", () => page.nodes.push(layer));
+              studio.select([layer.id]);
+            }}
+          >
+            <Plus />
+          </button>
+          <button
             title="Поднять слой"
             disabled={studio.selection.length !== 1}
             onClick={() => order(1)}
@@ -257,6 +292,34 @@ export function LayersPanel({ page }: { page: DesignPage }) {
           </button>
         </div>
       </div>
+      <div className="layer-controls">
+        <select
+          aria-label="Фильтр слоёв"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        >
+          {Object.entries({
+            all: "Все типы",
+            text: "Текст",
+            image: "Изображения",
+            path: "Кисть",
+            rect: "Прямоугольники",
+            ellipse: "Эллипсы",
+            polygon: "Многоугольники",
+            frame: "Кадры",
+            group: "Группы",
+            arrow: "Стрелки",
+            line: "Линии",
+          }).map(([v, l]) => (
+            <option key={v} value={v}>
+              {l}
+            </option>
+          ))}
+        </select>
+      </div>
+      <LayerControls
+        nodes={page.nodes.filter((n) => studio.selection.includes(n.id))}
+      />
       <div className="layers">
         {rows(null, 0)}
         {page.nodes.length === 0 && (
@@ -274,7 +337,13 @@ const axes = [
   ["middle", "По центру по вертикали", AlignVerticalJustifyCenter],
   ["bottom", "По нижнему краю", AlignVerticalJustifyEnd],
 ] as const;
-export function Inspector({ page }: { page: DesignPage }) {
+export function Inspector({
+  page,
+  brush,
+}: {
+  page: DesignPage;
+  brush: boolean;
+}) {
   const [tab, setTab] = useState("Дизайн"),
     doc = studio.document!;
   const nodes = page.nodes.filter((n) => studio.selection.includes(n.id)),
@@ -282,7 +351,19 @@ export function Inspector({ page }: { page: DesignPage }) {
     box = selectionBounds(page.nodes, studio.selection);
   function assign(patch: Partial<DesignNode>) {
     studio.mutate("Свойства объекта", () => {
-      for (const o of nodes) Object.assign(o, patch);
+      for (const o of nodes) {
+        Object.assign(o, patch);
+        if (
+          o.kind === "text" &&
+          ("text" in patch ||
+            "fontFamily" in patch ||
+            "fontSize" in patch ||
+            "fontWeight" in patch)
+        ) {
+          o.textLayout ??= "auto";
+          fitText(o);
+        }
+      }
     });
   }
   function geometry(key: "x" | "y" | "width" | "height", value: string) {
@@ -297,7 +378,11 @@ export function Inspector({ page }: { page: DesignPage }) {
           key === "y" ? v - box.y : 0,
         );
       else if (nodes.length === 1 && n.kind === "frame") n[key] = v;
-      else resizeNodes(page.nodes, studio.selection, box, { ...box, [key]: v });
+      else {
+        if (key === "width" && nodes.length === 1 && n.kind === "text")
+          n.textLayout = "wrap";
+        resizeNodes(page.nodes, studio.selection, box, { ...box, [key]: v });
+      }
     });
   }
   function color(key: "fill" | "stroke", label: string) {
@@ -349,6 +434,13 @@ export function Inspector({ page }: { page: DesignPage }) {
           </button>
         ))}
       </div>
+      {tab === "Дизайн" && (
+        <>
+          {brush && <BrushPanel />}
+          <ColorPanel nodes={nodes} />
+          <Adjustments nodes={nodes} />
+        </>
+      )}
       {!n ? (
         <section>
           <h3>Страница</h3>

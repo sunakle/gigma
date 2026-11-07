@@ -19,18 +19,17 @@ import { recoverDrafts } from "./core/browser-drafts";
 import { storage } from "./core/storage";
 export const Brand = () => (
   <span className="brand">
-    <span className="brand-mark" aria-hidden>
-      G
-    </span>{" "}
-    Gigma
+    <img className="g-logo" src="./gigma.svg" alt="" /> Gigma
   </span>
 );
 export function Home({
+  settings,
   open,
   load,
   importFile,
   report,
 }: {
+  settings: () => void;
   open: (doc: DesignDocument) => void;
   load: (id: string) => void;
   importFile: () => void;
@@ -73,8 +72,9 @@ export function Home({
       </header>
       <div className="home-body">
         <aside>
-          <div className="workspace-icon">G</div>
+          <img className="g-logo big" src="./gigma.svg" alt="Gigma" />
           <h3>Моя студия</h3>
+          <button onClick={settings}>Настройки</button>
           <button className="nav-active">
             <LayoutGrid /> Документы
           </button>

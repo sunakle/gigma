@@ -44,6 +44,18 @@ import {
 } from "../shared/model";
 import { Canvas, fitPage, Scene, zoomAt, type Tool } from "./Canvas";
 import { Inspector, LayersPanel } from "./Panels";
+import { textLines } from "./core/text-layout";
+import { Settings } from "./Settings";
+import { usePrefs } from "./core/preferences";
+import {
+  Settings2,
+  Puzzle,
+  Pipette,
+  Eraser,
+  Hexagon,
+  MousePointer,
+  FileInput,
+} from "lucide-react";
 import { Home } from "./Home";
 import { rememberDraft } from "./core/browser-drafts";
 import { storage } from "./core/storage";
@@ -62,13 +74,17 @@ import { download, exportSVG, fileName, svgPNG } from "./core/svg";
 
 const tools = [
   ["select", "Выделение", "V", MousePointer2],
+  ["direct", "Прямое выделение", "D", MousePointer],
   ["frame", "Кадр", "F", Frame],
   ["rect", "Прямоугольник", "R", Square],
   ["ellipse", "Эллипс", "O", Circle],
+  ["polygon", "Многоугольник", "Y", Hexagon],
   ["line", "Линия", "L", Minus],
   ["arrow", "Стрелка", "A", MoveUpRight],
   ["path", "Карандаш", "P", Pencil],
   ["text", "Текст", "T", Type],
+  ["picker", "Пипетка", "I", Pipette],
+  ["eraser", "Ластик объектов", "E", Eraser],
   ["pan", "Рука", "H", Hand],
 ] as const;
 const blurField = () => {
@@ -80,6 +96,8 @@ function filenameDate() {
 }
 export default function App() {
   useSyncExternalStore(studio.subscribe, studio.snapshot);
+  const prefs = usePrefs();
+  const [settings, setSettings] = useState<null | "settings" | "plugins">(null);
   const [home, setHome] = useState(true),
     [tool, setTool] = useState<Tool>("select"),
     [space, setSpace] = useState(false),
@@ -93,7 +111,8 @@ export default function App() {
     [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const importInput = useRef<HTMLInputElement>(null),
-    imageInput = useRef<HTMLInputElement>(null);
+    imageInput = useRef<HTMLInputElement>(null),
+    aiInput = useRef<HTMLInputElement>(null);
   const clip = useRef<{ ids: string[]; nodes: DesignNode[] } | null>(null);
   const report = useCallback(
     (e: unknown) => setNotice(e instanceof Error ? e.message : String(e)),
@@ -326,6 +345,10 @@ export default function App() {
         command("save");
         return;
       }
+      if (settings) {
+        if (e.key === "Escape") setSettings(null);
+        return;
+      }
       if (typing || home) return;
       if (e.key === "Escape") {
         setMenu(false);
@@ -393,7 +416,7 @@ export default function App() {
       )[e.key];
       if (delta && sel.length) {
         e.preventDefault();
-        const k = e.shiftKey ? 10 : 1;
+        const k = (e.shiftKey ? 10 : 1) * prefs.nudge;
         studio.mutate("Сдвинуть", (_, p) =>
           moveNodes(p.nodes, sel, delta[0] * k, delta[1] * k),
         );
@@ -417,7 +440,35 @@ export default function App() {
     setBusy(true);
     try {
       const name = fileName(doc.name);
-      if (format === "gigma")
+      if (format === "ai") {
+        if (!window.gigma?.illustrator)
+          throw Error("Для AI откройте программу Gigma для Windows.");
+        const result = await window.gigma.illustrator({
+          mode: "export",
+          document: {
+            ...doc,
+            cover: "",
+            pages: doc.pages.map((p) => ({
+              ...p,
+              nodes: p.nodes.map((n) =>
+                n.kind === "text" && n.textLayout === "wrap"
+                  ? {
+                      ...n,
+                      text: textLines(n).join("\n"),
+                      textLayout: "auto" as const,
+                    }
+                  : n,
+              ),
+            })),
+          },
+          selection: scope === "selection" ? sel : undefined,
+        });
+        download(
+          new Blob([new Uint8Array(result)]),
+          name + ".ai",
+          "application/postscript",
+        );
+      } else if (format === "gigma")
         download(
           JSON.stringify({ ...doc, cover: "" }, null, 2),
           name + ".gigma",
@@ -449,6 +500,7 @@ export default function App() {
     <>
       {home || !doc || !page ? (
         <Home
+          settings={() => setSettings("settings")}
           open={(d) => void open(d).catch(report)}
           load={(id) => void load(id).catch(report)}
           importFile={() => importInput.current?.click()}
@@ -464,7 +516,7 @@ export default function App() {
                 aria-label="Главное меню"
                 onClick={() => setMenu(!menu)}
               >
-                <b>G</b>
+                <img src="./gigma.svg" className="g-logo" alt="Gigma" />
                 <ChevronDown size={12} />
               </button>
               {menu && (
@@ -475,6 +527,24 @@ export default function App() {
                     onClick={() => setMenu(false)}
                   />
                   <div className="dropdown">
+                    <button
+                      onClick={() => {
+                        setMenu(false);
+                        setSettings("settings");
+                      }}
+                    >
+                      <Settings2 />
+                      Настройки
+                    </button>
+                    <button
+                      onClick={() => {
+                        setMenu(false);
+                        setSettings("plugins");
+                      }}
+                    >
+                      <Puzzle />
+                      Расширения
+                    </button>
                     {(
                       [
                         ["home", "Мои документы", "", HomeIcon],
@@ -497,7 +567,7 @@ export default function App() {
                 </>
               )}
             </div>
-            <div className="toolstrip">
+            <div className="toolstrip" aria-label="Инструменты">
               {tools.map(([id, label, key, Icon]) => (
                 <button
                   key={id}
@@ -517,7 +587,28 @@ export default function App() {
               >
                 <ImagePlus />
               </button>
+              <button
+                aria-label="Поместить AI"
+                title={
+                  window.gigma?.illustrator
+                    ? "Поместить первую монтажную область AI как изображение"
+                    : "AI доступен в программе для Windows"
+                }
+                disabled={!window.gigma?.illustrator || busy}
+                onClick={() => aiInput.current?.click()}
+              >
+                <FileInput />
+              </button>
             </div>
+            <button
+              title="Настройки рабочей среды"
+              onClick={() => setSettings("settings")}
+            >
+              <Settings2 size={17} />
+            </button>
+            <button title="Расширения" onClick={() => setSettings("plugins")}>
+              <Puzzle size={17} />
+            </button>
             <input
               className="doc-title"
               aria-label="Название документа"
@@ -586,9 +677,10 @@ export default function App() {
               space={space}
               grid={grid}
             />
-            <Inspector page={page} />
+            <Inspector page={page} brush={tool === "path"} />
           </div>
           <footer>
+            {busy && !modal && <span>Подготовка файла Illustrator…</span>}
             <button
               title="К документам"
               onClick={() => void goHome().catch(report)}
@@ -597,7 +689,11 @@ export default function App() {
             </button>
             <span>/</span>
             <span>{page.name}</span>
-            <div className="save-state" role="status">
+            <div
+              className="save-state"
+              role="status"
+              aria-label="Состояние сохранения"
+            >
               <i
                 className={
                   studio.status === "Все изменения сохранены" ? "ok" : ""
@@ -669,6 +765,43 @@ export default function App() {
           if (f) void importImage(f).catch(report);
         }}
       />
+      <input
+        ref={aiInput}
+        hidden
+        type="file"
+        accept=".ai"
+        aria-label="Файл Illustrator"
+        onChange={async (e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          if (!f || !window.gigma?.illustrator) return;
+          setBusy(true);
+          try {
+            if (f.size > 32 * 1024 * 1024)
+              throw Error("Файл AI больше 32 МиБ.");
+            const bytes = await window.gigma.illustrator({
+              mode: "import",
+              bytes: new Uint8Array(await f.arrayBuffer()),
+            });
+            await importImage(
+              new window.File([new Uint8Array(bytes)], f.name, {
+                type: "image/png",
+              }),
+            );
+          } catch (err) {
+            report(err);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      />
+      {settings && (
+        <Settings
+          initial={settings}
+          close={() => setSettings(null)}
+          report={report}
+        />
+      )}
       {modal && (
         <div className="veil">
           <div
@@ -687,7 +820,7 @@ export default function App() {
             {modal === "keys" ? (
               <div className="keys">
                 {[
-                  ["Инструменты", "V F R O L A P T H"],
+                  ["Инструменты", "V D F R O Y L A P T I E H"],
                   ["Переместить холст", "Пробел + перетаскивание"],
                   ["Изменить масштаб", "Ctrl + колесо"],
                   ["Вписать / масштаб 100%", "1 / 0"],
@@ -712,6 +845,9 @@ export default function App() {
                     onChange={(e) => setFormat(e.target.value)}
                   >
                     <option value="svg">SVG · векторное изображение</option>
+                    <option value="ai" disabled={!window.gigma?.illustrator}>
+                      AI · через Illustrator для Windows
+                    </option>
                     <option value="png">PNG · изображение</option>
                     <option value="gigma">
                       Gigma · редактируемый документ

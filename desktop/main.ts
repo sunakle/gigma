@@ -10,6 +10,7 @@ import {
 import { join, resolve, extname, sep } from "node:path";
 import { mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { convertIllustrator } from "./illustrator";
 import { DocumentStore } from "./document-store";
 
 protocol.registerSchemesAsPrivileged([
@@ -85,7 +86,8 @@ else {
       minWidth: 1000,
       minHeight: 680,
       title: "Gigma",
-      backgroundColor: "#f5f5f5",
+      backgroundColor: "#26272c",
+      icon: join(dist, "gigma.ico"),
       show: process.env.GIGMA_TEST_MODE !== "1",
       webPreferences: {
         preload: join(__dirname, "preload.cjs"),
@@ -104,6 +106,10 @@ else {
       )
         throw new Error("Недопустимый источник запроса.");
     };
+    ipcMain.handle("gigma:illustrator", (event, payload) => {
+      trusted(event);
+      return convertIllustrator(payload);
+    });
     ipcMain.handle("gigma:list", (event) => {
       trusted(event);
       return store.list();

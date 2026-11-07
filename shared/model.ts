@@ -1,3 +1,4 @@
+import { adjustmentKinds } from "./adjustments";
 import { z } from "zod";
 
 export const kinds = [
@@ -10,8 +11,10 @@ export const kinds = [
   "text",
   "image",
   "group",
+  "polygon",
 ] as const;
 const point = z.object({
+  pressure: z.number().min(0).max(1).optional(),
   x: z.number().finite().min(-1e6).max(1e6),
   y: z.number().finite().min(-1e6).max(1e6),
 });
@@ -25,6 +28,34 @@ export const nodeSchema = z.object({
   y: z.number().finite().min(-1e6).max(1e6),
   width: z.number().min(1).max(100000),
   height: z.number().min(1).max(100000),
+  artLayer: z.boolean().optional(),
+  sides: z.number().int().min(3).max(32).optional(),
+  fillOpacity: z.number().min(0).max(1).optional(),
+  blend: z
+    .enum([
+      "normal",
+      "multiply",
+      "screen",
+      "overlay",
+      "darken",
+      "lighten",
+      "difference",
+      "soft-light",
+    ])
+    .optional(),
+  adjustments: z
+    .array(
+      z.object({
+        kind: z.enum(adjustmentKinds),
+        amount: z.number().min(-100).max(100),
+        contrast: z.number().min(-100).max(100).optional(),
+        low: color.optional(),
+        high: color.optional(),
+      }),
+    )
+    .max(16)
+    .optional(),
+  textLayout: z.enum(["auto", "wrap"]).optional(),
   rotation: z.number().min(-360).max(360),
   fill: color,
   stroke: color,
@@ -103,6 +134,11 @@ export interface StorageAPI {
   save(doc: DesignDocument, expectedRevision: number): Promise<SaveResult>;
   config(): Promise<{ folder: string; desktop: boolean }>;
   openFolder(): Promise<void>;
+  illustrator?(
+    payload:
+      | { mode: "import"; bytes: Uint8Array }
+      | { mode: "export"; document: DesignDocument; selection?: string[] },
+  ): Promise<Uint8Array>;
   onBeforeClose?(callback: () => Promise<void>): () => void;
 }
 export function validateDocument(value: unknown): DesignDocument {
@@ -189,6 +225,7 @@ const names: Record<Kind, string> = {
   text: "Текст",
   image: "Изображение",
   group: "Группа",
+  polygon: "Многоугольник",
 };
 export function newNode(
   kind: Kind,

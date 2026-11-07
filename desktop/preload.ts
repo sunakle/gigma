@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 contextBridge.exposeInMainWorld("gigma", {
+  illustrator: (payload: unknown) =>
+    ipcRenderer.invoke("gigma:illustrator", payload),
   list: () => ipcRenderer.invoke("gigma:list"),
   load: (id: string) => ipcRenderer.invoke("gigma:load", id),
   save: (document: unknown, revision: number) =>

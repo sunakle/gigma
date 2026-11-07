@@ -136,7 +136,9 @@ test("Редактирование → закрытие → перезапуск
     await tab.getByLabel("Название документа").fill("Из браузера");
     await tab.getByLabel("Название документа").press("Enter");
     await tab.keyboard.press("Control+s");
-    await expect(tab.getByRole("status")).toHaveText("Все изменения сохранены");
+    await expect(
+      tab.getByRole("status", { name: "Состояние сохранения" }),
+    ).toHaveText("Все изменения сохранены");
     await tab.reload();
     await tab.getByRole("button", { name: /Из браузера/ }).click();
     await expect(
