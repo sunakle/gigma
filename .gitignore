@@ -1,0 +1,13 @@
+node_modules/
+dist/
+build/
+release/
+test-results/
+playwright-report/
+work/
+.env
+.env.*
+*.gigma
+*.gigma.bak
+*.tmp
+*.log

@@ -1,0 +1,61 @@
+{
+  "name": "gigma",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Локальный редактор дизайна и визуальных документов",
+  "author": "sunakle",
+  "type": "module",
+  "main": "build/main.cjs",
+  "scripts": {
+    "dev": "npm run build && npm run web",
+    "build": "tsc --noEmit && vite build && node scripts/build-desktop.mjs",
+    "start": "electron .",
+    "web": "node build/server.cjs",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "package": "npm run build && electron-builder --win portable --x64"
+  },
+  "dependencies": {
+    "lucide-react": "1.70.0",
+    "proper-lockfile": "4.1.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0",
+    "@types/node": "26.6.6",
+    "@types/proper-lockfile": "4.1.4",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.2.1",
+    "electron": "45.2.3",
+    "electron-builder": "26.18.0",
+    "esbuild": "0.28.2",
+    "prettier": "3.9.10",
+    "typescript": "7.0.2",
+    "vite": "8.3.6",
+    "vitest": "5.1.0"
+  },
+  "build": {
+    "appId": "com.sunakle.gigma",
+    "productName": "Gigma",
+    "directories": {
+      "output": "release"
+    },
+    "electronDist": "node_modules/electron/dist",
+    "files": [
+      "dist/**/*",
+      "build/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "portable",
+      "signAndEditExecutable": false,
+      "artifactName": "Gigma-${version}-Windows-x64.${ext}"
+    },
+    "portable": {
+      "requestExecutionLevel": "user"
+    }
+  }
+}
