@@ -396,6 +396,10 @@
   color: var(--strong);
   border-color: #ab92eb;
 }
+[data-theme="dark"] :is(.layer-row.drop-target, .side-title.drop-target) {
+  background: #383f58;
+  color: #e3d8ff;
+}
 [data-theme="dark"] :is(.doc-card:hover, .create-card:hover) {
   background: #3d3b48;
 }

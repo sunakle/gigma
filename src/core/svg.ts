@@ -110,20 +110,21 @@ export function nodeSVG(n: DesignNode, preview = false): string {
     }
   }
   if (n.kind === "text") {
+    const horizontalScale = n.textScaleX ?? 1;
     const x =
       n.textAlign === "center"
-        ? n.width / 2
+        ? n.width / (2 * horizontalScale)
         : n.textAlign === "right"
-          ? n.width
+          ? n.width / horizontalScale
           : 0;
-    inner = `<text x="${x}" y="${n.fontSize}" fill="${fill}" opacity="${n.opacity}" font-size="${n.fontSize}" font-family="${esc(n.fontFamily)}, sans-serif" font-weight="${n.fontWeight}" text-anchor="${n.textAlign === "center" ? "middle" : n.textAlign === "right" ? "end" : "start"}" xml:space="preserve" fill-opacity="${n.fillOpacity ?? 1}">${textLines(
+    inner = `<g transform="scale(${horizontalScale} 1)"><text x="${x}" y="${n.fontSize}" fill="${fill}" opacity="${n.opacity}" font-size="${n.fontSize}" font-family="${esc(n.fontFamily)}, sans-serif" font-weight="${n.fontWeight}" text-anchor="${n.textAlign === "center" ? "middle" : n.textAlign === "right" ? "end" : "start"}" xml:space="preserve" fill-opacity="${n.fillOpacity ?? 1}">${textLines(
       n,
     )
       .map(
         (line, i) =>
           `<tspan x="${x}" dy="${i ? n.fontSize * 1.3 : 0}">${esc(line) || " "}</tspan>`,
       )
-      .join("")}</text>`;
+      .join("")}</text></g>`;
   }
   if (n.kind === "vector" && n.artwork) {
     const { box, elements, editablePaint } = n.artwork;

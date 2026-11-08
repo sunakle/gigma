@@ -12,6 +12,9 @@ import {
   duplicateNodes,
   groupNodes,
   moveNodes,
+  proportionalResize,
+  reparentNode,
+  reorderNode,
   screenToWorld,
 } from "../src/core/geometry";
 import { exportSVG } from "../src/core/svg";
@@ -69,6 +72,68 @@ describe("Файловое хранилище", () => {
   });
 });
 describe("Геометрия и формат", () => {
+  it("вкладывает группу в группу и запрещает цикл", () => {
+    const p = newPage(),
+      outer = newNode("group", 0, 0),
+      inner = newNode("group", 20, 30),
+      shape = newNode("rect", 24, 36, 10, 12);
+    shape.parentId = inner.id;
+    p.nodes.push(outer, inner, shape);
+    expect(reparentNode(p, inner.id, outer.id)).toBe(true);
+    expect(inner.parentId).toBe(outer.id);
+    expect(outer).toMatchObject({ x: 24, y: 36, width: 10, height: 12 });
+    expect(reparentNode(p, outer.id, inner.id)).toBe(false);
+    moveNodes(p.nodes, [outer.id], 8, 5);
+    expect(shape).toMatchObject({ x: 32, y: 41 });
+    expect(reparentNode(p, inner.id, null)).toBe(true);
+    expect(inner.parentId).toBeNull();
+  });
+  it("переставляет слои и дочерние группы вместе с объектами", () => {
+    const p = newPage();
+    const a = newNode("group", 0, 0),
+      b = newNode("group", 20, 0),
+      aChild = newNode("rect", 0, 0),
+      bChild = newNode("rect", 20, 0),
+      c = newNode("rect", 40, 0);
+    aChild.parentId = a.id;
+    bChild.parentId = b.id;
+    p.nodes.push(a, aChild, b, bChild, c);
+    expect(reorderNode(p, b.id, a.id, "before")).toBe(true);
+    expect(p.nodes.filter((n) => n.parentId === null).map((n) => n.id)).toEqual(
+      [b.id, a.id, c.id],
+    );
+    expect(bChild.parentId).toBe(b.id);
+    expect(reorderNode(p, aChild.id, bChild.id, "after")).toBe(true);
+    expect(aChild.parentId).toBe(b.id);
+    expect(p.nodes.filter((n) => n.parentId === b.id).map((n) => n.id)).toEqual(
+      [bChild.id, aChild.id],
+    );
+    expect(reorderNode(p, b.id, aChild.id, "after")).toBe(false);
+  });
+  it("сохраняет пропорции и противоположную опору при растяжении", () => {
+    const original = { x: 10, y: 20, width: 80, height: 40 };
+    expect(
+      proportionalResize(
+        original,
+        { x: 10, y: 20, width: 120, height: 50 },
+        "se",
+      ),
+    ).toEqual({ x: 10, y: 20, width: 120, height: 60 });
+    expect(
+      proportionalResize(
+        original,
+        { x: 30, y: 25, width: 60, height: 35 },
+        "nw",
+      ),
+    ).toEqual({ x: 30, y: 30, width: 60, height: 30 });
+    expect(
+      proportionalResize(
+        original,
+        { x: 30, y: 20, width: 60, height: 40 },
+        "w",
+      ),
+    ).toEqual({ x: 30, y: 25, width: 60, height: 30 });
+  });
   it("учитывает масштаб и перемещение холста", () => {
     expect(
       screenToWorld(

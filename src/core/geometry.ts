@@ -5,7 +5,6 @@ import {
   type DesignPage,
   type DesignDocument,
 } from "../../shared/model";
-import { fitText } from "./text-layout";
 export type Point = { x: number; y: number };
 export type Bounds = Point & { width: number; height: number };
 export const container = (n: DesignNode) =>
@@ -102,6 +101,39 @@ export const intersects = (a: Bounds, b: Bounds) =>
   a.x + a.width >= b.x &&
   a.y <= b.y + b.height &&
   a.y + a.height >= b.y;
+export function proportionalResize(
+  from: Bounds,
+  to: Bounds,
+  handle: string,
+): Bounds {
+  const horizontal = to.width / from.width;
+  const vertical = to.height / from.height;
+  const corner = handle.length === 2;
+  const scale = corner
+    ? Math.abs(horizontal - 1) >= Math.abs(vertical - 1)
+      ? horizontal
+      : vertical
+    : handle === "e" || handle === "w"
+      ? horizontal
+      : vertical;
+  const safeScale = Math.max(scale, 1 / from.width, 1 / from.height);
+  const width = from.width * safeScale;
+  const height = from.height * safeScale;
+  return {
+    x: handle.includes("w")
+      ? from.x + from.width - width
+      : handle.includes("e")
+        ? from.x
+        : from.x + (from.width - width) / 2,
+    y: handle.includes("n")
+      ? from.y + from.height - height
+      : handle.includes("s")
+        ? from.y
+        : from.y + (from.height - height) / 2,
+    width,
+    height,
+  };
+}
 export function moveNodes(
   nodes: DesignNode[],
   ids: string[],
@@ -132,30 +164,99 @@ export function resizeNodes(
       n.height = Math.max(1, n.height * sy);
       n.points = n.points.map((p) => ({ ...p, x: p.x * sx, y: p.y * sy }));
       if (n.kind === "text") {
-        n.fontSize = Math.max(6, Math.min(1000, n.fontSize * sy));
-        n.textLayout ??= "wrap";
-        fitText(n);
+        const originalFontSize = n.fontSize;
+        n.fontSize = Math.max(6, Math.min(1000, originalFontSize * sy));
+        n.textScaleX = Math.max(
+          0.001,
+          Math.min(
+            1000,
+            ((n.textScaleX ?? 1) * sx * originalFontSize) / n.fontSize,
+          ),
+        );
       }
     }
 }
 export function refreshGroups(nodes: DesignNode[]) {
-  for (let depth = 0; depth < 8; depth++) {
-    let changed = false;
-    for (const n of nodes.filter((n) => n.kind === "group")) {
-      const b = union(nodes.filter((c) => c.parentId === n.id).map(bounds));
-      if (
-        b &&
-        (b.x !== n.x ||
-          b.y !== n.y ||
-          b.width !== n.width ||
-          b.height !== n.height)
-      ) {
-        Object.assign(n, b);
-        changed = true;
-      }
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const children = new Map<string, DesignNode[]>();
+  for (const n of nodes)
+    if (n.parentId) {
+      const siblings = children.get(n.parentId) ?? [];
+      siblings.push(n);
+      children.set(n.parentId, siblings);
     }
-    if (!changed) break;
+  const depth = (n: DesignNode) => {
+    let level = 0,
+      parent = n.parentId;
+    while (parent) {
+      level++;
+      parent = byId.get(parent)?.parentId ?? null;
+    }
+    return level;
+  };
+  for (const n of nodes
+    .filter((n) => n.kind === "group")
+    .sort((a, b) => depth(b) - depth(a))) {
+    const b = union((children.get(n.id) ?? []).map(bounds));
+    if (b) Object.assign(n, b);
   }
+}
+export function reparentNode(
+  page: DesignPage,
+  id: string,
+  parentId: string | null,
+) {
+  const node = page.nodes.find((n) => n.id === id);
+  const parent = page.nodes.find((n) => n.id === parentId);
+  if (!node || (parentId && (!parent || !container(parent)))) return false;
+  if (node.parentId === parentId) return false;
+  let ancestor = parent;
+  while (ancestor) {
+    if (ancestor.id === id) return false;
+    ancestor = page.nodes.find((n) => n.id === ancestor?.parentId);
+  }
+  const subtree = descendants(page.nodes, [id]);
+  const moved = page.nodes.filter((n) => subtree.has(n.id));
+  page.nodes = page.nodes.filter((n) => !subtree.has(n.id));
+  node.parentId = parentId;
+  let lastChild = -1;
+  for (let i = page.nodes.length - 1; i >= 0; i--)
+    if (page.nodes[i].parentId === parentId) {
+      lastChild = i;
+      break;
+    }
+  const target = parentId
+    ? page.nodes.findIndex((n) => n.id === parentId)
+    : page.nodes.length;
+  page.nodes.splice(lastChild >= 0 ? lastChild + 1 : target + 1, 0, ...moved);
+  refreshGroups(page.nodes);
+  return true;
+}
+export function reorderNode(
+  page: DesignPage,
+  id: string,
+  targetId: string,
+  position: "before" | "after",
+) {
+  const node = page.nodes.find((n) => n.id === id);
+  const target = page.nodes.find((n) => n.id === targetId);
+  if (!node || !target || id === targetId) return false;
+  const subtree = descendants(page.nodes, [id]);
+  if (subtree.has(targetId)) return false;
+  const moved = page.nodes.filter((n) => subtree.has(n.id));
+  page.nodes = page.nodes.filter((n) => !subtree.has(n.id));
+  node.parentId = target.parentId;
+  const targetSubtree = descendants(page.nodes, [targetId]);
+  const index =
+    position === "before"
+      ? page.nodes.findIndex((n) => n.id === targetId)
+      : page.nodes.reduce(
+          (last, n, i) => (targetSubtree.has(n.id) ? i + 1 : last),
+          0,
+        );
+  page.nodes.splice(index, 0, ...moved);
+  refreshGroups(page.nodes);
+  return true;
 }
 export function groupNodes(page: DesignPage, ids: string[]) {
   const selected = roots(page.nodes, ids),

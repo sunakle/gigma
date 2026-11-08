@@ -19,6 +19,7 @@ import {
   descendants,
   inherited,
   toggleObject,
+  proportionalResize,
   resizeNodes,
   roots,
   screenToWorld,
@@ -570,25 +571,9 @@ export function Canvas({
         a.selected.length === 1
           ? page.nodes.find((n) => n.id === a.selected[0])
           : null;
-      if (single?.kind === "text" && h.length === 2) {
-        const sx = target.width / b.width,
-          sy = target.height / b.height;
-        const ratio = Math.max(
-          6 / single.fontSize,
-          Math.min(
-            1000 / single.fontSize,
-            Math.abs(sx - 1) > Math.abs(sy - 1) ? sx : sy,
-          ),
-        );
-        target.width = b.width * ratio;
-        target.height = b.height * ratio;
-        target.x = h.includes("w") ? b.x + b.width - target.width : b.x;
-        target.y = h.includes("n") ? b.y + b.height - target.height : b.y;
-      }
+      if (e.shiftKey) Object.assign(target, proportionalResize(b, target, h));
       if (single?.kind === "frame") Object.assign(single, target);
       else {
-        if (single?.kind === "text" && (h === "e" || h === "w"))
-          single.textLayout = "wrap";
         resizeNodes(page.nodes, a.selected, b, target);
       }
     } else {
@@ -655,6 +640,7 @@ export function Canvas({
   function up(e: ReactPointer<SVGSVGElement>) {
     const a = g.current;
     if (!a || a.pointerId !== e.pointerId) return;
+    if (a.type === "resize" && e.type === "pointerup") move(e);
     if (a.type === "edit") {
       g.current = null;
       if (svg.current?.hasPointerCapture(e.pointerId))

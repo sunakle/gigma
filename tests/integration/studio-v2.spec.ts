@@ -777,3 +777,262 @@ test("Рамка внутри слоя выбирает только задет�
     await app.close();
   }
 });
+
+test("Группы вкладываются, а слои меняют порядок кнопками и перетаскиванием", async () => {
+  const app = await launch();
+  try {
+    const p = await app.firstWindow();
+    const doc = newDocument("Вложенные группы");
+    const a = newNode("group", 10, 10, 30, 30),
+      b = newNode("group", 60, 10, 30, 30);
+    a.name = "Группа А";
+    b.name = "Группа Б";
+    const child = newNode("rect", 60, 10, 30, 30),
+      last = newNode("rect", 110, 10, 30, 30);
+    child.name = "Деталь Б";
+    last.name = "Последний";
+    child.parentId = b.id;
+    doc.pages[0].nodes.push(a, b, child, last);
+    await p.evaluate((d) => window.gigma!.save(d, 0), doc);
+    await p.reload();
+    await p.getByRole("button", { name: /Вложенные группы/ }).click();
+    const layer = (name: string) =>
+      p.getByRole("button", { name: "Выбрать слой " + name });
+    const saved = async () => {
+      await p.keyboard.press("Control+s");
+      await expect(
+        p.getByRole("status", { name: "Состояние сохранения" }),
+      ).toHaveText("Все изменения сохранены");
+      return p.evaluate(
+        async (id) => (await window.gigma!.load(id)).document.pages[0].nodes,
+        doc.id,
+      );
+    };
+    await layer("Группа А").click();
+    await p.getByRole("button", { name: "Новая группа" }).click();
+    let nodes = await saved();
+    const nested = nodes.find((n) => n.name === "Группа 3")!;
+    expect(nested.parentId).toBe(a.id);
+    await layer("Группа Б").dragTo(
+      p.locator(".layer-row").filter({ has: layer("Группа А") }),
+    );
+    nodes = await saved();
+    expect(nodes.find((n) => n.id === b.id)?.parentId).toBe(a.id);
+    expect(nodes.find((n) => n.id === child.id)?.parentId).toBe(b.id);
+    await layer("Группа Б").dragTo(
+      p.locator(".side-title.line").filter({ hasText: "Слои" }),
+    );
+    nodes = await saved();
+    expect(nodes.find((n) => n.id === b.id)?.parentId).toBeNull();
+    await layer("Группа Б").click();
+    await p.getByRole("button", { name: "Опустить слой" }).click();
+    nodes = await saved();
+    expect(nodes.filter((n) => n.parentId === null).map((n) => n.id)).toEqual([
+      a.id,
+      b.id,
+      last.id,
+    ]);
+    await layer("Последний").dragTo(
+      p.locator(".layer-row").filter({ has: layer("Группа А") }),
+      { targetPosition: { x: 60, y: 3 } },
+    );
+    nodes = await saved();
+    expect(nodes.filter((n) => n.parentId === null).map((n) => n.id)).toEqual([
+      last.id,
+      a.id,
+      b.id,
+    ]);
+    await p.keyboard.press("Control+z");
+    nodes = await saved();
+    expect(nodes.filter((n) => n.parentId === null).map((n) => n.id)).toEqual([
+      a.id,
+      b.id,
+      last.id,
+    ]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("Прямоугольник скругляется и сохраняется", async () => {
+  const app = await launch();
+  try {
+    const p = await app.firstWindow();
+    await p.getByRole("button", { name: "Новый дизайн" }).click();
+    const rect = (await p.getByLabel("Холст").boundingBox())!;
+    await p.getByRole("button", { name: "Прямоугольник" }).click();
+    await p.mouse.move(rect.x + 120, rect.y + 130);
+    await p.mouse.down();
+    await p.mouse.move(rect.x + 220, rect.y + 230);
+    await p.mouse.up();
+    await p.getByLabel("Радиус углов").fill("18");
+    await p.getByLabel("Радиус углов").press("Enter");
+    await expect(p.locator(".surface [data-object] rect[rx='18']")).toHaveCount(
+      1,
+    );
+    await p.keyboard.press("Control+s");
+    await expect(
+      p.getByRole("status", { name: "Состояние сохранения" }),
+    ).toHaveText("Все изменения сохранены");
+    const title = await p.locator(".doc-title").inputValue();
+    await p.reload();
+    await p.getByRole("button", { name: title, exact: false }).click();
+    await expect(p.locator(".surface [data-object] rect[rx='18']")).toHaveCount(
+      1,
+    );
+  } finally {
+    await app.close();
+  }
+});
+
+test("Shift меняет размер изображения с сохранением пропорций", async () => {
+  const app = await launch();
+  try {
+    const p = await app.firstWindow();
+    const doc = newDocument("Масштабирование изображения");
+    const picture = newNode("image", 40, 60, 80, 40);
+    picture.image = await p.evaluate(() => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 4;
+      canvas.height = 2;
+      canvas.getContext("2d")!.fillRect(0, 0, 4, 2);
+      return canvas.toDataURL();
+    });
+    doc.pages[0].nodes.push(picture);
+    await p.evaluate((d) => window.gigma!.save(d, 0), doc);
+    await p.reload();
+    await p
+      .getByRole("button", { name: /Масштабирование изображения/ })
+      .click();
+    const image = p.locator(`.surface [data-object="${picture.id}"] image`);
+    await image.click();
+    const resize = async (
+      handle: string,
+      dx: number,
+      dy: number,
+      shift: boolean,
+    ) => {
+      const box = (await p.locator(`[data-handle="${handle}"]`).boundingBox())!;
+      await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      if (shift) await p.keyboard.down("Shift");
+      await p.mouse.down();
+      await p.mouse.move(
+        box.x + box.width / 2 + dx,
+        box.y + box.height / 2 + dy,
+        { steps: 3 },
+      );
+      await p.mouse.up();
+      if (shift) await p.keyboard.up("Shift");
+    };
+    const dimensions = async () => {
+      await p.keyboard.press("Control+s");
+      await expect(
+        p.getByRole("status", { name: "Состояние сохранения" }),
+      ).toHaveText("Все изменения сохранены");
+      const saved = await p.evaluate(
+        async (id) => (await window.gigma!.load(id)).document,
+        doc.id,
+      );
+      const n = saved.pages[0].nodes.find((node) => node.id === picture.id)!;
+      return { x: n.x, y: n.y, width: n.width, height: n.height };
+    };
+    await resize("se", 40, 10, true);
+    expect(await dimensions()).toEqual({
+      x: 40,
+      y: 60,
+      width: 120,
+      height: 60,
+    });
+    await resize("nw", 30, 15, true);
+    expect(await dimensions()).toEqual({ x: 70, y: 75, width: 90, height: 45 });
+    await resize("w", 20, 0, true);
+    expect(await dimensions()).toEqual({ x: 90, y: 80, width: 70, height: 35 });
+    await p.keyboard.press("Control+z");
+    expect(await dimensions()).toEqual({ x: 70, y: 75, width: 90, height: 45 });
+    await image.click();
+    await resize("se", 30, 0, false);
+    expect(await dimensions()).toEqual({
+      x: 70,
+      y: 75,
+      width: 120,
+      height: 45,
+    });
+  } finally {
+    await app.close();
+  }
+});
+
+test("Текст растягивается по ширине и высоте и остаётся редактируемым", async () => {
+  const app = await launch();
+  try {
+    const p = await app.firstWindow();
+    const doc = newDocument("Деформация текста");
+    const label = newNode("text", 40, 60, 120, 50);
+    label.text = "Лесной замок";
+    label.textLayout = "auto";
+    doc.pages[0].nodes.push(label);
+    await p.evaluate((d) => window.gigma!.save(d, 0), doc);
+    await p.reload();
+    await p.getByRole("button", { name: /Деформация текста/ }).click();
+    await p.getByRole("button", { name: "Выбрать слой Текст" }).click();
+    await p.getByLabel("Гарнитура").selectOption("Impact");
+    const shown = p.locator(`.surface [data-object="${label.id}"] text`);
+    await expect(shown).toHaveCSS("font-family", /Impact/);
+    const initialWidth = (await shown.boundingBox())!.width;
+    const resize = async (
+      handle: string,
+      dx: number,
+      dy: number,
+      shift = false,
+    ) => {
+      const box = (await p.locator(`[data-handle="${handle}"]`).boundingBox())!;
+      await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      if (shift) await p.keyboard.down("Shift");
+      await p.mouse.down();
+      await p.mouse.move(
+        box.x + box.width / 2 + dx,
+        box.y + box.height / 2 + dy,
+        { steps: 3 },
+      );
+      await p.mouse.up();
+      if (shift) await p.keyboard.up("Shift");
+    };
+    await resize("e", 40, 0);
+    expect((await shown.boundingBox())!.width).toBeGreaterThan(
+      initialWidth * 1.25,
+    );
+    await resize("s", 0, 20);
+    const afterVertical = (await shown.boundingBox())!;
+    expect(afterVertical.height).toBeGreaterThan(24);
+    const beforeShift = {
+      width: Number(await p.getByLabel("W", { exact: true }).inputValue()),
+      height: Number(await p.getByLabel("H", { exact: true }).inputValue()),
+    };
+    await resize("se", 32, 5, true);
+    await p.keyboard.press("Control+s");
+    await expect(
+      p.getByRole("status", { name: "Состояние сохранения" }),
+    ).toHaveText("Все изменения сохранены");
+    const saved = await p.evaluate(
+      async (id) => (await window.gigma!.load(id)).document,
+      doc.id,
+    );
+    const text = saved.pages[0].nodes.find((n) => n.id === label.id)!;
+    expect(text.fontFamily).toBe("Impact");
+    expect(text.width).toBeGreaterThan(beforeShift.width);
+    expect(text.height).toBeGreaterThan(beforeShift.height);
+    expect(text.width / text.height).toBeCloseTo(
+      beforeShift.width / beforeShift.height,
+      2,
+    );
+    expect(text.textScaleX).toBeGreaterThan(1);
+    await shown.dblclick();
+    await p.getByLabel("Текст на холсте").fill("Новый лесной замок");
+    await p.getByLabel("Текст на холсте").press("Control+Enter");
+    await expect(shown).toHaveText("Новый лесной замок");
+    await p.keyboard.press("Control+z");
+    await expect(shown).toHaveText("Лесной замок");
+  } finally {
+    await app.close();
+  }
+});

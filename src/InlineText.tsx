@@ -22,6 +22,7 @@ export function InlineText({
     input.current?.select();
   }, []);
   const offset = draft.fontSize - nativeBaseline(draft);
+  const horizontalScale = draft.textScaleX ?? 1;
   return (
     <>
       <g
@@ -40,46 +41,48 @@ export function InlineText({
           vectorEffect="non-scaling-stroke"
           pointerEvents="none"
         />
-        <foreignObject
-          x={0}
-          y={offset}
-          width={draft.width}
-          height={Math.max(draft.height, draft.fontSize * 1.3) + 1}
-          overflow="visible"
-          onPointerDown={(e) => e.stopPropagation()}
-          onDoubleClick={(e) => e.stopPropagation()}
-        >
-          <textarea
-            ref={input}
-            aria-label="Текст на холсте"
-            className="inline-text-input"
-            value={value}
-            maxLength={100000}
-            spellCheck={false}
-            wrap={draft.textLayout === "wrap" ? "soft" : "off"}
-            style={{
-              fontFamily: draft.fontFamily + ", sans-serif",
-              fontSize: draft.fontSize,
-              fontWeight: draft.fontWeight,
-              lineHeight: draft.fontSize * 1.3 + "px",
-              textAlign: draft.textAlign,
-              whiteSpace: draft.textLayout === "wrap" ? "pre-wrap" : "pre",
-              caretColor: draft.fill === "none" ? "#0d99ff" : draft.fill,
-            }}
-            onChange={(e) => setValue(e.currentTarget.value)}
-            onBlur={(e) => commit(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (
-                !e.nativeEvent.isComposing &&
-                (e.key === "Escape" ||
-                  (e.key === "Enter" && (e.ctrlKey || e.metaKey)))
-              ) {
-                e.preventDefault();
-                e.currentTarget.blur();
-              }
-            }}
-          />
-        </foreignObject>
+        <g transform={`scale(${horizontalScale} 1)`}>
+          <foreignObject
+            x={0}
+            y={offset}
+            width={draft.width / horizontalScale}
+            height={Math.max(draft.height, draft.fontSize * 1.3) + 1}
+            overflow="visible"
+            onPointerDown={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            <textarea
+              ref={input}
+              aria-label="Текст на холсте"
+              className="inline-text-input"
+              value={value}
+              maxLength={100000}
+              spellCheck={false}
+              wrap={draft.textLayout === "wrap" ? "soft" : "off"}
+              style={{
+                fontFamily: draft.fontFamily + ", sans-serif",
+                fontSize: draft.fontSize,
+                fontWeight: draft.fontWeight,
+                lineHeight: draft.fontSize * 1.3 + "px",
+                textAlign: draft.textAlign,
+                whiteSpace: draft.textLayout === "wrap" ? "pre-wrap" : "pre",
+                caretColor: draft.fill === "none" ? "#0d99ff" : draft.fill,
+              }}
+              onChange={(e) => setValue(e.currentTarget.value)}
+              onBlur={(e) => commit(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (
+                  !e.nativeEvent.isComposing &&
+                  (e.key === "Escape" ||
+                    (e.key === "Enter" && (e.ctrlKey || e.metaKey)))
+                ) {
+                  e.preventDefault();
+                  e.currentTarget.blur();
+                }
+              }}
+            />
+          </foreignObject>
+        </g>
       </g>
     </>
   );

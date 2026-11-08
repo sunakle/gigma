@@ -44,6 +44,8 @@ import {
   container,
   inherited,
   moveNodes,
+  reparentNode,
+  reorderNode,
   resizeNodes,
   selectionBounds,
   toggleObject,
@@ -127,6 +129,8 @@ export const LayersPanel = memo(function LayersPanel({
   }
   const [filter, setFilter] = useState("all");
   const list = useRef<HTMLDivElement>(null);
+  const dragging = useRef<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewport, setViewport] = useState(600);
   useLayoutEffect(() => {
@@ -186,10 +190,71 @@ export const LayersPanel = memo(function LayersPanel({
       ),
       target = peers[peers.findIndex((n) => n.id === id) + dir];
     if (target)
-      studio.mutate("Порядок слоя", () => {
-        const j = page.nodes.indexOf(target);
-        [page.nodes[index], page.nodes[j]] = [page.nodes[j], page.nodes[index]];
+      studio.mutate("Порядок слоя", (_, activePage) =>
+        reorderNode(activePage, id, target.id, dir > 0 ? "after" : "before"),
+      );
+  }
+  function canDrop(id: string, parentId: string | null, reorder = false) {
+    const source = page.nodes.find((n) => n.id === id);
+    const parent = page.nodes.find((n) => n.id === parentId);
+    if (
+      !source ||
+      (!reorder && source.parentId === parentId) ||
+      inherited(page.nodes, source, "locked") ||
+      inherited(page.nodes, source, "hidden") ||
+      (parentId &&
+        (!parent ||
+          !container(parent) ||
+          inherited(page.nodes, parent, "locked") ||
+          inherited(page.nodes, parent, "hidden")))
+    )
+      return false;
+    let current = parent;
+    while (current) {
+      if (current.id === id) return false;
+      current = page.nodes.find((n) => n.id === current?.parentId);
+    }
+    return true;
+  }
+  function placement(e: React.DragEvent<HTMLDivElement>, target: DesignNode) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    if (y < 7) return "before";
+    if (y > rect.height - 7) return "after";
+    return container(target)
+      ? "inside"
+      : y < rect.height / 2
+        ? "before"
+        : "after";
+  }
+  function drop(
+    parentId: string | null,
+    targetId?: string,
+    position?: "before" | "after" | "inside",
+  ) {
+    const id = dragging.current;
+    dragging.current = null;
+    setDropTarget(null);
+    if (!id) return;
+    if (targetId && position && position !== "inside") {
+      if (
+        !canDrop(
+          id,
+          page.nodes.find((n) => n.id === targetId)?.parentId ?? null,
+          true,
+        )
+      )
+        return;
+      studio.mutate("Порядок слоя", (_, activePage) =>
+        reorderNode(activePage, id, targetId, position),
+      );
+    } else {
+      if (!canDrop(id, parentId)) return;
+      studio.mutate("Перенести в группу", (_, activePage) => {
+        reparentNode(activePage, id, parentId);
       });
+    }
+    studio.select([id]);
   }
   function row({ n, depth, has, closed }: (typeof rows)[number]) {
     const Icon = icons[n.kind];
@@ -199,9 +264,33 @@ export const LayersPanel = memo(function LayersPanel({
         className={
           "layer-row " +
           (selection.includes(n.id) ? "chosen " : "") +
-          (n.hidden ? "dim" : "")
+          (n.hidden ? "dim " : "") +
+          (dropTarget === n.id + ":inside" ? "drop-target " : "") +
+          (dropTarget === n.id + ":before" ? "drop-before " : "") +
+          (dropTarget === n.id + ":after" ? "drop-after" : "")
         }
         style={{ paddingLeft: 7 + depth * 12 }}
+        onDragOver={(e) => {
+          e.stopPropagation();
+          const where = placement(e, n);
+          const parentId = where === "inside" ? n.id : n.parentId;
+          if (
+            dragging.current &&
+            canDrop(dragging.current, parentId, where !== "inside") &&
+            dragging.current !== n.id
+          ) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            setDropTarget(n.id + ":" + where);
+          }
+        }}
+        onDragLeave={() => setDropTarget(null)}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const where = placement(e, n);
+          drop(where === "inside" ? n.id : n.parentId, n.id, where);
+        }}
       >
         {has ? (
           <button
@@ -216,6 +305,19 @@ export const LayersPanel = memo(function LayersPanel({
         <button
           className="layer-name"
           aria-label={"Выбрать слой " + n.name}
+          draggable={
+            !inherited(page.nodes, n, "locked") &&
+            !inherited(page.nodes, n, "hidden")
+          }
+          onDragStart={(e) => {
+            dragging.current = n.id;
+            e.dataTransfer.setData("application/x-gigma-layer", n.id);
+            e.dataTransfer.effectAllowed = "move";
+          }}
+          onDragEnd={() => {
+            dragging.current = null;
+            setDropTarget(null);
+          }}
           onClick={(e) => {
             if (
               inherited(page.nodes, n, "locked") ||
@@ -301,11 +403,57 @@ export const LayersPanel = memo(function LayersPanel({
           </button>
         ))}
       </div>
-      <div className="side-title line">
+      <div
+        className={
+          "side-title line " + (dropTarget === "root" ? "drop-target" : "")
+        }
+        onDragOver={(e) => {
+          if (dragging.current && canDrop(dragging.current, null)) {
+            e.preventDefault();
+            setDropTarget("root");
+          }
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          drop(null);
+        }}
+        onDragLeave={() => setDropTarget(null)}
+      >
         <span>
           <Layers /> Слои
         </span>
         <div>
+          <button
+            title="Новая группа"
+            onClick={() => {
+              const current = page.nodes.find((n) => n.id === selection[0]);
+              const group = newNode(
+                "group",
+                current?.x ?? 0,
+                current?.y ?? 0,
+                1,
+                1,
+              );
+              group.name =
+                "Группа " +
+                (page.nodes.filter((n) => n.kind === "group" && !n.artLayer)
+                  .length +
+                  1);
+              group.parentId =
+                current &&
+                container(current) &&
+                !inherited(page.nodes, current, "locked") &&
+                !inherited(page.nodes, current, "hidden")
+                  ? current.id
+                  : (current?.parentId ?? null);
+              studio.mutate("Создать группу", (_, activePage) =>
+                activePage.nodes.push(group),
+              );
+              studio.select([group.id]);
+            }}
+          >
+            <Group />
+          </button>
           <button
             title="Новый слой"
             onClick={() => {
@@ -441,9 +589,12 @@ export function Inspector({
         );
       else if (nodes.length === 1 && n.kind === "frame") n[key] = v;
       else {
-        if (key === "width" && nodes.length === 1 && n.kind === "text")
+        if (key === "width" && nodes.length === 1 && n.kind === "text") {
           n.textLayout = "wrap";
-        resizeNodes(page.nodes, studio.selection, box, { ...box, [key]: v });
+          n.width = v;
+          fitText(n);
+        } else
+          resizeNodes(page.nodes, studio.selection, box, { ...box, [key]: v });
       }
     });
   }
@@ -653,9 +804,11 @@ export function Inspector({
                     })
                   }
                 >
-                  {["Inter", "Arial", "Georgia", "monospace"].map((v) => (
-                    <option key={v}>{v}</option>
-                  ))}
+                  {["Inter", "Arial", "Georgia", "Impact", "monospace"].map(
+                    (v) => (
+                      <option key={v}>{v}</option>
+                    ),
+                  )}
                 </select>
               </label>
               <div className="fields">
@@ -696,6 +849,40 @@ export function Inspector({
               </select>
             </section>
           )}
+          {nodes.length === 1 && ["rect", "frame"].includes(n.kind) && (
+            <section>
+              <h3>Углы</h3>
+              <label className="stack">
+                Скругление углов
+                <input
+                  aria-label="Скругление углов"
+                  type="range"
+                  min={0}
+                  max={Math.min(n.width, n.height) / 2}
+                  step="any"
+                  value={Math.min(n.radius, n.width / 2, n.height / 2)}
+                  onPointerDown={() => studio.begin("Скругление углов")}
+                  onChange={(e) => {
+                    if (studio.before) {
+                      n.radius = Number(e.target.value);
+                      studio.emit();
+                    } else assign({ radius: Number(e.target.value) });
+                  }}
+                  onPointerUp={() => studio.finish()}
+                  onPointerCancel={() => studio.finish()}
+                  onBlur={() => studio.finish()}
+                />
+              </label>
+              <Field
+                label="Радиус углов"
+                type="number"
+                min={0}
+                max={Math.min(n.width, n.height) / 2}
+                value={Math.min(n.radius, n.width / 2, n.height / 2)}
+                commit={(s) => assign({ radius: Number(s) })}
+              />
+            </section>
+          )}
           {(n.artwork?.editablePaint ||
             !["line", "arrow", "path", "image", "vector", "group"].includes(
               n.kind,
@@ -703,16 +890,6 @@ export function Inspector({
             <section>
               <h3>Заливка</h3>
               {color("fill", "Заливка")}
-              {["frame", "rect"].includes(n.kind) && (
-                <Field
-                  label="Скругление"
-                  type="number"
-                  min={0}
-                  max={50000}
-                  value={n.radius}
-                  commit={(s) => assign({ radius: Number(s) })}
-                />
-              )}
             </section>
           )}
           {(n.artwork?.editablePaint ||

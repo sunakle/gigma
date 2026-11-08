@@ -570,6 +570,21 @@ button.primary,
   background: #e0efff;
   color: #134d80;
 }
+.layer-row.drop-target,
+.side-title.drop-target {
+  outline: 1px solid #0d99ff;
+  outline-offset: -1px;
+  background: #d8edff;
+}
+.layer-row.drop-before {
+  box-shadow: inset 0 2px #0d99ff;
+}
+.layer-row.drop-after {
+  box-shadow: inset 0 -2px #0d99ff;
+}
+.layer-name[draggable="true"] {
+  cursor: grab;
+}
 .layer-row.dim .layer-name {
   opacity: 0.45;
 }

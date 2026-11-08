@@ -29,7 +29,7 @@ function measure(n: DesignNode, s: string) {
 let mirror: HTMLDivElement | undefined;
 const lineCache = new WeakMap<
   DesignNode,
-  { text: string; width: number; font: string; lines: string[] }
+  { text: string; width: number; scale: number; font: string; lines: string[] }
 >();
 function browserLines(n: DesignNode, paragraphs: string[]) {
   const cached = lineCache.get(n),
@@ -38,6 +38,7 @@ function browserLines(n: DesignNode, paragraphs: string[]) {
     cached &&
     cached.text === n.text &&
     cached.width === n.width &&
+    cached.scale === (n.textScaleX ?? 1) &&
     cached.font === face
   )
     return cached.lines;
@@ -50,7 +51,7 @@ function browserLines(n: DesignNode, paragraphs: string[]) {
   }
   mirror.style.font = face;
   mirror.style.lineHeight = n.fontSize * 1.3 + "px";
-  mirror.style.width = n.width + "px";
+  mirror.style.width = n.width / (n.textScaleX ?? 1) + "px";
   const lines: string[] = [];
   const range = document.createRange();
   for (const paragraph of paragraphs) {
@@ -90,7 +91,13 @@ function browserLines(n: DesignNode, paragraphs: string[]) {
     }
   }
   mirror.replaceChildren();
-  lineCache.set(n, { text: n.text, width: n.width, font: face, lines });
+  lineCache.set(n, {
+    text: n.text,
+    width: n.width,
+    scale: n.textScaleX ?? 1,
+    font: face,
+    lines,
+  });
   return lines;
 }
 export function textLines(n: DesignNode) {
@@ -102,16 +109,19 @@ export function textLines(n: DesignNode) {
   for (const paragraph of paragraphs) {
     let line = "";
     for (const word of paragraph.match(/\S+\s*|\s+/gu) ?? []) {
-      if (line && measure(n, line + word.trimEnd()) > n.width) {
+      if (
+        line &&
+        measure(n, line + word.trimEnd()) * (n.textScaleX ?? 1) > n.width
+      ) {
         result.push(line.trimEnd());
         line = "";
       }
-      if (measure(n, word.trimEnd()) <= n.width) {
+      if (measure(n, word.trimEnd()) * (n.textScaleX ?? 1) <= n.width) {
         line += word;
         continue;
       }
       for (const ch of word) {
-        if (line && measure(n, line + ch) > n.width) {
+        if (line && measure(n, line + ch) * (n.textScaleX ?? 1) > n.width) {
           result.push(line);
           line = "";
         }
@@ -127,7 +137,12 @@ export function fitText(n: DesignNode) {
   if (n.textLayout === "auto")
     n.width = Math.min(
       100000,
-      Math.max(4, ...n.text.split("\n").map((s) => measure(n, s) + 2)),
+      Math.max(
+        4,
+        ...n.text
+          .split("\n")
+          .map((s) => (measure(n, s) + 2) * (n.textScaleX ?? 1)),
+      ),
     );
   n.height = Math.min(
     100000,
