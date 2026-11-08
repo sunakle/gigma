@@ -343,7 +343,18 @@ test("Открытие и размещение настоящего AI со сл
       },
       "data:image/png;base64," + image.toString("base64"),
     );
-    expect(recovered.actual).toEqual(recovered.original);
+    expect([recovered.actual.width, recovered.actual.height]).toEqual([
+      recovered.original.width,
+      recovered.original.height,
+    ]);
+    // The fixture stores an untagged DeviceRGB image. Illustrator's working profile
+    // can change its RGB channels slightly; alpha and pixel dimensions are exact.
+    for (let i = 0; i < recovered.original.rgba.length; i++) {
+      const error = Math.abs(
+        recovered.actual.rgba[i] - recovered.original.rgba[i],
+      );
+      expect(error).toBeLessThanOrEqual(i % 4 === 3 ? 0 : 4);
+    }
     await expect(
       p.getByRole("button", {
         name: "Выбрать слой Нет связанного файла — Вне областей",
