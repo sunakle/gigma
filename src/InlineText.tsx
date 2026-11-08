@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { DesignNode } from "../shared/model";
-import { fitText, nativeBaseline } from "./core/text-layout";
+import { fitText, nativeBaseline, textVerticalScale } from "./core/text-layout";
 import { nodeSVG } from "./core/svg";
 
 export function InlineText({
@@ -23,6 +23,7 @@ export function InlineText({
   }, []);
   const offset = draft.fontSize - nativeBaseline(draft);
   const horizontalScale = draft.textScaleX ?? 1;
+  const verticalScale = textVerticalScale(draft);
   return (
     <>
       <g
@@ -41,12 +42,14 @@ export function InlineText({
           vectorEffect="non-scaling-stroke"
           pointerEvents="none"
         />
-        <g transform={`scale(${horizontalScale} 1)`}>
+        <g transform={`scale(${horizontalScale} ${verticalScale})`}>
           <foreignObject
             x={0}
             y={offset}
             width={draft.width / horizontalScale}
-            height={Math.max(draft.height, draft.fontSize * 1.3) + 1}
+            height={
+              Math.max(draft.height / verticalScale, draft.fontSize * 1.3) + 1
+            }
             overflow="visible"
             onPointerDown={(e) => e.stopPropagation()}
             onDoubleClick={(e) => e.stopPropagation()}

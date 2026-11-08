@@ -70,6 +70,7 @@ export const nodeSchema = z.object({
   text: z.string().max(100000),
   fontSize: z.number().min(6).max(1000),
   textScaleX: z.number().finite().min(0.001).max(1000).optional(),
+  textScaleY: z.number().finite().min(0.001).max(1000).optional(),
   fontFamily: z.enum(["Inter", "Arial", "Georgia", "Impact", "monospace"]),
   fontWeight: z.enum(["400", "500", "600", "700"]),
   textAlign: z.enum(["left", "center", "right"]),

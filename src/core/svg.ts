@@ -1,6 +1,6 @@
 import type { DesignNode, DesignPage } from "../../shared/model";
 import { bounds, union, type Bounds, descendants } from "./geometry";
-import { textLines } from "./text-layout";
+import { textLines, textVerticalScale } from "./text-layout";
 import { vectorXML } from "../../shared/vector";
 import { brushOutline } from "./brush";
 import { adjustmentMarkup } from "../../shared/adjustments";
@@ -111,19 +111,21 @@ export function nodeSVG(n: DesignNode, preview = false): string {
   }
   if (n.kind === "text") {
     const horizontalScale = n.textScaleX ?? 1;
+    const verticalScale = textVerticalScale(n);
     const x =
       n.textAlign === "center"
         ? n.width / (2 * horizontalScale)
         : n.textAlign === "right"
           ? n.width / horizontalScale
           : 0;
-    inner = `<g transform="scale(${horizontalScale} 1)"><text x="${x}" y="${n.fontSize}" fill="${fill}" opacity="${n.opacity}" font-size="${n.fontSize}" font-family="${esc(n.fontFamily)}, sans-serif" font-weight="${n.fontWeight}" text-anchor="${n.textAlign === "center" ? "middle" : n.textAlign === "right" ? "end" : "start"}" xml:space="preserve" fill-opacity="${n.fillOpacity ?? 1}">${textLines(
+    inner = `<g transform="scale(${horizontalScale} ${verticalScale})"><text x="${x}" y="${n.fontSize}" fill="${fill}" opacity="${n.opacity}" font-size="${n.fontSize}" font-family="${esc(n.fontFamily)}, sans-serif" font-weight="${n.fontWeight}" text-anchor="${n.textAlign === "center" ? "middle" : n.textAlign === "right" ? "end" : "start"}" xml:space="preserve" fill-opacity="${n.fillOpacity ?? 1}">${textLines(
       n,
     )
-      .map(
-        (line, i) =>
-          `<tspan x="${x}" dy="${i ? n.fontSize * 1.3 : 0}">${esc(line) || " "}</tspan>`,
-      )
+      .map((line, i) => {
+        const visible = line.trimEnd() || " ";
+        const trailing = line.slice(visible.length);
+        return `<tspan x="${x}" dy="${i ? n.fontSize * 1.3 : 0}">${esc(visible)}</tspan>${trailing ? `<tspan display="none">${esc(trailing)}</tspan>` : ""}`;
+      })
       .join("")}</text></g>`;
   }
   if (n.kind === "vector" && n.artwork) {

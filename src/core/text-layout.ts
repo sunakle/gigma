@@ -132,6 +132,11 @@ export function textLines(n: DesignNode) {
   }
   return result;
 }
+export function textVerticalScale(n: DesignNode) {
+  const lines = Math.max(1, textLines(n).length);
+  const fitted = n.height / (lines * n.fontSize * 1.3);
+  return Math.max(0.001, Math.min(n.textScaleY ?? 1, fitted));
+}
 export function fitText(n: DesignNode) {
   if (n.kind !== "text") return;
   if (n.textLayout === "auto")
@@ -144,8 +149,13 @@ export function fitText(n: DesignNode) {
           .map((s) => (measure(n, s) + 2) * (n.textScaleX ?? 1)),
       ),
     );
-  n.height = Math.min(
-    100000,
-    Math.max(n.fontSize * 1.3, textLines(n).length * n.fontSize * 1.3),
-  );
+  if (
+    n.textLayout !== "wrap" ||
+    (n.textScaleX === undefined && n.textScaleY === undefined)
+  )
+    n.height = Math.min(
+      100000,
+      Math.max(n.fontSize * 1.3, textLines(n).length * n.fontSize * 1.3) *
+        (n.textScaleY ?? 1),
+    );
 }

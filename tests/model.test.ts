@@ -20,6 +20,7 @@ import {
   screenToWorld,
 } from "../src/core/geometry";
 import { exportSVG } from "../src/core/svg";
+import { fitText, textLines, textVerticalScale } from "../src/core/text-layout";
 describe("Файловое хранилище", () => {
   let folder: string, store: DocumentStore;
   beforeEach(async () => {
@@ -74,6 +75,25 @@ describe("Файловое хранилище", () => {
   });
 });
 describe("Геометрия и формат", () => {
+  it("удерживает длинный деформированный текст внутри его рамки", () => {
+    const n = newNode("text", 0, 0, 4500, 2025);
+    n.text = "грибочек";
+    n.textLayout = "wrap";
+    n.fontSize = 1000;
+    n.textScaleX = 4;
+    const height = n.height;
+    expect(textLines(n).length).toBeGreaterThan(2);
+    expect(textVerticalScale(n)).toBeLessThan(1);
+    expect(
+      textVerticalScale(n) * textLines(n).length * n.fontSize * 1.3,
+    ).toBeLessThanOrEqual(height);
+    n.text = "грибочек лес";
+    fitText(n);
+    expect(n.height).toBe(height);
+    expect(
+      textVerticalScale(n) * textLines(n).length * n.fontSize * 1.3,
+    ).toBeLessThanOrEqual(height);
+  });
   it("вкладывает группу в группу и запрещает цикл", () => {
     const p = newPage(),
       outer = newNode("group", 0, 0),

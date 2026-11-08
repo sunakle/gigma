@@ -173,6 +173,13 @@ export function resizeNodes(
             ((n.textScaleX ?? 1) * sx * originalFontSize) / n.fontSize,
           ),
         );
+        n.textScaleY = Math.max(
+          0.001,
+          Math.min(
+            1000,
+            ((n.textScaleY ?? 1) * sy * originalFontSize) / n.fontSize,
+          ),
+        );
       }
     }
 }

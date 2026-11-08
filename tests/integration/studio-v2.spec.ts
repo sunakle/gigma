@@ -1129,3 +1129,51 @@ test("Текст растягивается по ширине и высоте и
     await app.close();
   }
 });
+
+test("Многострочный растянутый текст не выходит из рамки после правки и перезапуска", async () => {
+  const app = await launch();
+  try {
+    const p = await app.firstWindow();
+    const doc = newDocument("Рамка длинного текста");
+    const label = newNode("text", 100, 100, 4500, 2025);
+    label.text = "грибочек";
+    label.textLayout = "wrap";
+    label.fontSize = 1000;
+    label.textScaleX = 4;
+    doc.pages[0].nodes.push(label);
+    doc.pages[0].view = { x: 80, y: 80, zoom: 0.1 };
+    await p.evaluate((d) => window.gigma!.save(d, 0), doc);
+    await p.reload();
+    await p.getByRole("button", { name: /Рамка длинного текста/ }).click();
+    await p.getByRole("button", { name: "Выбрать слой Текст" }).click();
+    const text = p.locator(`.surface [data-object="${label.id}"] text`);
+    const frame = p.locator(".surface .selection rect").first();
+    const withinFrame = async () => {
+      const letters = (await text.boundingBox())!;
+      const box = (await frame.boundingBox())!;
+      expect(letters.x).toBeGreaterThanOrEqual(box.x - 3);
+      expect(letters.y).toBeGreaterThanOrEqual(box.y - 3);
+      expect(letters.x + letters.width).toBeLessThanOrEqual(
+        box.x + box.width + 3,
+      );
+      expect(letters.y + letters.height).toBeLessThanOrEqual(
+        box.y + box.height + 3,
+      );
+    };
+    await withinFrame();
+    await text.dblclick();
+    await p.getByLabel("Текст на холсте").fill("грибочек лес");
+    await p.getByLabel("Текст на холсте").press("Control+Enter");
+    await withinFrame();
+    await p.keyboard.press("Control+s");
+    await expect(
+      p.getByRole("status", { name: "Состояние сохранения" }),
+    ).toHaveText("Все изменения сохранены");
+    await p.reload();
+    await p.getByRole("button", { name: /Рамка длинного текста/ }).click();
+    await p.getByRole("button", { name: "Выбрать слой Текст" }).click();
+    await withinFrame();
+  } finally {
+    await app.close();
+  }
+});
