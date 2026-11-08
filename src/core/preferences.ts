@@ -10,6 +10,7 @@ export const paletteSchema = z.object({
 });
 const schema = z.object({
   theme: z.enum(["dark", "light"]).default("dark"),
+  paintSlot: z.enum(["foreground", "background"]).default("foreground"),
   foreground: z
     .string()
     .regex(/^#[a-f\d]{6}$/i)

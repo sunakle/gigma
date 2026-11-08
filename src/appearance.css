@@ -39,13 +39,36 @@
   position: relative;
   z-index: 1;
 }
-.text-edit {
-  z-index: 2;
-  background: #7774;
-  resize: none;
+/* The SVG draws the live glyphs. This transparent native field supplies the caret,
+   selection, IME and clipboard using the same unscaled typography. */
+:root .stage textarea.inline-text-input {
+  display: block;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  border: none;
+  outline: none;
+  box-shadow: none;
   border-radius: 0;
-  box-sizing: content-box;
-  overflow: auto;
+  background: transparent;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  resize: none;
+  overflow: hidden;
+  scrollbar-width: none;
+  user-select: text;
+  cursor: text;
+  tab-size: 8;
+  overflow-wrap: break-word;
+  letter-spacing: normal;
+}
+.inline-text-input::selection {
+  background: rgb(55 144 235 / 0.32);
+  color: transparent;
 }
 .wallpaper {
   position: absolute;
@@ -192,7 +215,8 @@
   top: 42px;
   border: 0;
 }
-.spectrum-row input.hue, [data-theme="dark"] .spectrum-row input.hue {
+.spectrum-row input.hue,
+[data-theme="dark"] .spectrum-row input.hue {
   appearance: none;
   writing-mode: vertical-lr;
   direction: ltr;
@@ -375,10 +399,7 @@
 [data-theme="dark"] :is(.doc-card:hover, .create-card:hover) {
   background: #3d3b48;
 }
-[data-theme="dark"] .text-edit {
-  background: #383940;
-  outline-color: #84acff;
-}
+
 [data-theme="dark"] .toolstrip .active-tool {
   background: #7962ab;
 }

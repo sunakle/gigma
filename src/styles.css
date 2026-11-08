@@ -616,15 +616,6 @@ button.primary,
 .tool-text {
   cursor: text;
 }
-.text-edit {
-  position: absolute;
-  border: 1px solid #0d99ff;
-  resize: both;
-  background: #fffffff5;
-  padding: 0;
-  margin: 0;
-  min-width: 30px;
-}
 .canvas-hint {
   position: absolute;
   inset: 0;

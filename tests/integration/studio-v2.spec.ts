@@ -23,7 +23,10 @@ test("Текст, перо, цвета, обои и расширения", async
     await expect(p.locator("html")).toHaveAttribute("data-theme", "dark");
     await p.getByRole("button", { name: "Новый дизайн" }).click();
     await expect(p.getByText("Чистый холст")).toHaveCount(0);
-    await expect(p.getByLabel("Тон палитры")).toHaveCSS("background-image",/linear-gradient/);
+    await expect(p.getByLabel("Тон палитры")).toHaveCSS(
+      "background-image",
+      /linear-gradient/,
+    );
     const area = await p.getByLabel("Холст").boundingBox();
     const x = area!.x + 110,
       y = area!.y + 130;
@@ -49,16 +52,14 @@ test("Текст, перо, цвета, обои и расширения", async
     await p.getByRole("button", { name: "Расширения", exact: true }).click();
     await p.getByLabel("Лесная мастерская").check();
     await p.getByRole("button", { name: "Рабочая среда" }).click();
-    await p
-      .getByLabel("Файл обоев")
-      .setInputFiles({
-        name: "wall.png",
-        mimeType: "image/png",
-        buffer: Buffer.from(
-          "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAE0lEQVR4nGOs1zrBAANMcBZeDgBIzQF5oA/Q/gAAAABJRU5ErkJggg==",
-          "base64",
-        ),
-      });
+    await p.getByLabel("Файл обоев").setInputFiles({
+      name: "wall.png",
+      mimeType: "image/png",
+      buffer: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAE0lEQVR4nGOs1zrBAANMcBZeDgBIzQF5oA/Q/gAAAABJRU5ErkJggg==",
+        "base64",
+      ),
+    });
     await expect(p.getByTitle("Убрать обои")).toBeVisible();
     await p.getByTitle("Закрыть", { exact: true }).click();
     await expect(p.locator(".wallpaper")).toHaveCount(1);
@@ -144,6 +145,141 @@ test("Illustrator сохраняет AI и открывает его для ра
     expect(result.ai).toBe("%PDF-");
     expect(result.png).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
     expect(result.width).toBeGreaterThan(0);
+  } finally {
+    await app.close();
+  }
+});
+
+test("Ввод на холсте сохраняет разметку строк и размеры", async () => {
+  const app = await launch();
+  try {
+    const p = await app.firstWindow();
+    await p.getByRole("button", { name: "Новый дизайн" }).click();
+    const stage = (await p.getByLabel("Холст").boundingBox())!,
+      x = stage.x + stage.width * 0.4,
+      y = stage.y + stage.height * 0.4;
+    await p.getByRole("button", { name: "Текст", exact: true }).click();
+    await p.mouse.click(x, y);
+    const input = p.getByLabel("Текст на холсте"),
+      text = p.locator(".surface [data-object] text"),
+      lines = text.locator("tspan");
+    const long = "акгмкмпк мкмкмккмм ккм — текст без внезапного переноса";
+    await input.fill(long);
+    await expect(lines).toHaveCount(1);
+    await expect(lines.first()).toHaveText(long);
+    await expect(input).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(p.locator(".selection")).toHaveCount(0);
+    expect(await input.evaluate((el) => el.clientWidth)).toBeGreaterThan(220);
+    await input.press("End");
+    await input.press("Enter");
+    await p.keyboard.insertText("они");
+    await expect(lines).toHaveCount(2);
+    const compare = () =>
+      text.evaluate((el) => ({
+        lines: Array.from(el.children, (line) => ({
+          text: line.textContent,
+          box: line.getBoundingClientRect().toJSON(),
+        })),
+        color: getComputedStyle(el).fill,
+        box: el.getBoundingClientRect().toJSON(),
+      }));
+    const auto = await compare();
+    await input.press("Control+Enter");
+    expect(await compare()).toEqual(auto);
+    await p.getByLabel("W", { exact: true }).fill("135");
+    await p.getByLabel("W", { exact: true }).press("Enter");
+    await p.getByTitle("Увеличить", { exact: true }).click();
+    await lines.first().dblclick();
+    const wrapped = "Дорога в лес\nакгмкмпкмкмкмккммкмкмкмк";
+    await input.fill(wrapped);
+    expect(await lines.count()).toBeGreaterThan(2);
+    const metrics = await input.evaluate((el) => {
+      const t = el as HTMLTextAreaElement;
+      return [t.scrollHeight, t.clientHeight, t.scrollWidth, t.clientWidth];
+    });
+    expect(metrics[0]).toBeLessThanOrEqual(metrics[1] + 1);
+    expect(metrics[2]).toBeLessThanOrEqual(metrics[3] + 1);
+    const fixed = await compare();
+    await input.press("Control+Enter");
+    expect(await compare()).toEqual(fixed);
+    await p.keyboard.press("Control+z");
+    await expect(text).toContainText("текст без");
+  } finally {
+    await app.close();
+  }
+});
+test("Активный цвет, живой спектр и одна отмена за перетаскивание", async () => {
+  const app = await launch();
+  try {
+    const p = await app.firstWindow();
+    await p.getByRole("button", { name: "Новый дизайн" }).click();
+    const stage = (await p.getByLabel("Холст").boundingBox())!,
+      x = stage.x + 140,
+      y = stage.y + 100;
+    const color = p.getByLabel("Цвет рисования", { exact: true });
+    await color.fill("#da3903");
+    await p.getByRole("button", { name: "Кадр", exact: true }).click();
+    await p.mouse.click(x, y);
+    const frame = p.locator(".surface [data-object] > g > g > rect").first();
+    await expect(frame).toHaveCSS("fill", "rgb(218, 57, 3)");
+    const spectrum = (await p.locator(".spectrum").boundingBox())!;
+    const spec = (sx: number, sy: number) =>
+      p.mouse.move(
+        spectrum.x + sx * spectrum.width,
+        spectrum.y + sy * spectrum.height,
+      );
+    await spec(0.85, 0.2);
+    await p.mouse.down();
+    await spec(0.52, 0.3);
+    await expect(frame).not.toHaveCSS("fill", "rgb(218, 57, 3)");
+    const middle = await frame.evaluate((el) => getComputedStyle(el).fill);
+    await spec(0.22, 0.62);
+    await expect(frame).not.toHaveCSS("fill", middle);
+    const end = await frame.evaluate((el) => getComputedStyle(el).fill);
+    await p.mouse.up();
+    await expect(frame).toHaveCSS("fill", end);
+    await p.getByTitle("Отменить (Ctrl Z)").click();
+    await expect(frame).toHaveCSS("fill", "rgb(218, 57, 3)");
+    await p
+      .getByRole("button", { name: "Выбрать слой Кадр", exact: true })
+      .click();
+    const hue = p.getByLabel("Тон палитры"),
+      bar = (await hue.boundingBox())!;
+    await p.mouse.move(bar.x + bar.width / 2, bar.y + bar.height * 0.25);
+    await p.mouse.down();
+    await p.mouse.move(bar.x + bar.width / 2, bar.y + bar.height * 0.8, {
+      steps: 5,
+    });
+    await expect(frame).not.toHaveCSS("fill", "rgb(218, 57, 3)");
+    const live = await frame.evaluate((el) => getComputedStyle(el).fill);
+    await p.mouse.up();
+    await expect(frame).toHaveCSS("fill", live);
+    await p.getByTitle("Дополнительный цвет", { exact: true }).click();
+    await p.getByLabel("Дополнительный цвет рисования").fill("#184a62");
+    for (const [label, shape] of [
+      ["Прямоугольник", "rect"],
+      ["Эллипс", "ellipse"],
+      ["Многоугольник", "polygon"],
+      ["Кадр", "rect"],
+    ]) {
+      await p.getByRole("button", { name: label, exact: true }).click();
+      await p.mouse.click(x + 16, y + 20);
+      const selected = p.locator(
+        `.surface [data-object] > g > g > ${shape}[fill*="gigma-paint"]`,
+      );
+      await expect(selected).toHaveCount(1);
+      await expect(selected).toHaveCSS("fill", "rgb(24, 74, 98)");
+    }
+    await p.keyboard.press("Control+s");
+    await expect(
+      p.getByRole("status", { name: "Состояние сохранения" }),
+    ).toHaveText("Все изменения сохранены");
+    const saved = await p.evaluate(async () => {
+      const api = window.gigma!;
+      const { document } = await api.load((await api.list())[0].id);
+      return document.pages[0].nodes.map((n) => n.fill);
+    });
+    expect(saved.slice(-4)).toEqual(Array(4).fill("#184a62"));
   } finally {
     await app.close();
   }

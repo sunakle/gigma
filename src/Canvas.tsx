@@ -26,6 +26,7 @@ import {
   type Point,
 } from "./core/geometry";
 import { usePrefs, preferences } from "./core/preferences";
+import { InlineText } from "./InlineText";
 import { fitText } from "./core/text-layout";
 import { pressureFactor } from "./core/brush";
 import { removeNodes } from "./core/geometry";
@@ -95,12 +96,17 @@ export function Scene({
   activate,
   prefix = "canvas",
   editingId = null,
+  onCommitText,
+  selection,
 }: {
   nodes: DesignNode[];
   activate?: (id: string) => void;
   prefix?: string;
   editingId?: string | null;
+  onCommitText?: (n: DesignNode, value: string) => void;
+  selection?: string[];
 }) {
+  const selected = new Set(selection);
   const children = new Map<string | null, DesignNode[]>();
   for (const n of nodes) {
     if (!children.has(n.parentId)) children.set(n.parentId, []);
@@ -151,10 +157,16 @@ export function Scene({
             }
           />
         )}
+        {n.id === editingId && onCommitText && (
+          <InlineText node={n} commit={(value) => onCommitText(n, value)} />
+        )}
         {n.id !== editingId && n.kind !== "group" && (
           <g
             dangerouslySetInnerHTML={{
-              __html: nodeSVG(n.kind === "frame" ? { ...n, opacity: 1 } : n),
+              __html: nodeSVG(
+                n.kind === "frame" ? { ...n, opacity: 1 } : n,
+                selected.has(n.id),
+              ),
             }}
           />
         )}
@@ -223,17 +235,10 @@ export function Canvas({
     g = useRef<Gesture | null>(null);
   const [marquee, setMarquee] = useState<Bounds | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
-  const editor = useRef<HTMLTextAreaElement>(null);
+
   const v = page.view,
     selected = studio.selection,
     box = selectionBounds(page.nodes, selected);
-  const editNode = page.nodes.find((n) => n.id === editing);
-  useEffect(() => {
-    if (editing) {
-      editor.current?.focus();
-      editor.current?.select();
-    }
-  }, [editing]);
   useEffect(() => {
     const el = svg.current;
     if (!el) return;
@@ -268,7 +273,8 @@ export function Canvas({
   function down(e: ReactPointer<SVGSVGElement>) {
     if (g.current || e.button === 2) return;
     if (editing) {
-      editor.current?.blur();
+      if (document.activeElement instanceof HTMLTextAreaElement)
+        document.activeElement.blur();
     }
     const client = { x: e.clientX, y: e.clientY },
       start = screenToWorld(client, svg.current!.getBoundingClientRect(), v);
@@ -292,7 +298,7 @@ export function Canvas({
       const c =
         targetNode &&
         (targetNode.fill !== "none" ? targetNode.fill : targetNode.stroke);
-      if (c && c !== "none") preferences({ foreground: c });
+      if (c && c !== "none") preferences({ [prefs.paintSlot]: c });
       return;
     }
     if (tool === "eraser") {
@@ -380,12 +386,11 @@ export function Canvas({
       start.y = Math.round(start.y / prefs.gridSize) * prefs.gridSize;
     }
     const n = newNode(tool, start.x, start.y, 1, 1);
-    if (["rect", "polygon", "ellipse", "text"].includes(tool))
-      n.fill = prefs.foreground;
-    if (tool === "frame") n.fill = prefs.background;
+    if (["frame", "rect", "polygon", "ellipse", "text"].includes(tool))
+      n.fill = prefs[prefs.paintSlot];
     if (tool === "polygon") n.sides = prefs.sides;
     if (tool === "line" || tool === "arrow" || tool === "path")
-      n.stroke = prefs.foreground;
+      n.stroke = prefs[prefs.paintSlot];
     if (tool === "path") {
       n.strokeWidth = prefs.size;
       n.opacity = prefs.opacity;
@@ -422,8 +427,7 @@ export function Canvas({
       else if (frame) n.parentId = frame.id;
     }
     if (tool === "text") {
-      n.width = 220;
-      n.height = 36;
+      fitText(n);
     }
     if (tool === "path" || tool === "line" || tool === "arrow")
       n.points = [{ ...base.points[0], x: 0, y: 0 }];
@@ -694,8 +698,21 @@ export function Canvas({
                 {n.name}
               </text>
             ))}
-          <Scene nodes={page.nodes} editingId={editing} />
-          {box && (
+          <Scene
+            nodes={page.nodes}
+            editingId={editing}
+            selection={selected}
+            onCommitText={(node, value) => {
+              if (value !== node.text)
+                studio.mutate("Изменить текст", () => {
+                  node.text = value;
+                  node.textLayout ??= "auto";
+                  fitText(node);
+                });
+              setEditing(null);
+            }}
+          />
+          {box && !editing && (
             <g className="selection">
               <rect
                 {...box}
@@ -732,52 +749,6 @@ export function Canvas({
           )}
         </g>
       </svg>
-      {editNode && (
-        <textarea
-          key={editNode.id}
-          ref={editor}
-          aria-label="Текст на холсте"
-          className="text-edit"
-          defaultValue={editNode.text}
-          maxLength={100000}
-          style={{
-            left: v.x + editNode.x * v.zoom,
-            top: v.y + editNode.y * v.zoom,
-            width: Math.max(60, editNode.width * v.zoom + 4),
-            height: Math.max(50, editNode.height * v.zoom),
-            fontSize: editNode.fontSize * v.zoom,
-            fontFamily: editNode.fontFamily + ",sans-serif",
-            fontWeight: editNode.fontWeight,
-            textAlign: editNode.textAlign,
-            lineHeight: "1.3",
-            color: editNode.fill === "none" ? "inherit" : editNode.fill,
-            transform: "rotate(" + editNode.rotation + "deg)",
-            whiteSpace: editNode.textLayout === "wrap" ? "pre-wrap" : "pre",
-          }}
-          onInput={(e) => {
-            const el = e.currentTarget;
-            if (editNode.textLayout !== "wrap") {
-              el.style.width = "12px";
-              el.style.width = Math.max(60, el.scrollWidth + 6) + "px";
-            }
-            el.style.height = "1px";
-            el.style.height = Math.max(30, el.scrollHeight + 4) + "px";
-          }}
-          onBlur={(e) => {
-            const value = e.currentTarget.value;
-            studio.mutate("Изменить текст", () => {
-              editNode.text = value;
-              editNode.textLayout ??= "auto";
-              fitText(editNode);
-            });
-            setEditing(null);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Escape" || (e.key === "Enter" && e.ctrlKey))
-              e.currentTarget.blur();
-          }}
-        />
-      )}
     </main>
   );
 }

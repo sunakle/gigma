@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { paintChannel } from "./core/svg";
 import {
   ArrowLeftRight,
   Sun,
@@ -70,29 +71,96 @@ function rgb(h: number, s: number, v: number) {
 }
 export function ColorPanel({ nodes }: { nodes: DesignNode[] }) {
   const p = usePrefs(),
-    [background, setBackground] = useState(false),
-    [lastHue, setHue] = useState(0),
-    [dragColor, setDragColor] = useState<string | null>(null);
-  const color = dragColor ?? (background ? p.background : p.foreground),
-    { h, s, v } = hsv(color),
-    hue = s > 0 ? h : lastHue;
-  function choose(value: string) {
-    preferences(background ? { background: value } : { foreground: value });
-    if (!background && nodes.length)
+    slot = p.paintSlot;
+  type HSV = ReturnType<typeof hsv>;
+  const memory = useRef<
+    Partial<Record<typeof slot, { hex: string; point: HSV }>>
+  >({});
+  const [preview, setPreview] = useState<HSV | null>(null);
+  const drag = useRef<{
+    id: number;
+    surface: SVGSVGElement | null;
+    point: HSV;
+    raf: number | null;
+  } | null>(null);
+  const stored = p[slot];
+  function decode(hex: string): HSV {
+    const old = memory.current[slot];
+    if (old?.hex === hex) return old.point;
+    const point = hsv(hex);
+    if (!point.s) point.h = old?.point.h ?? 0;
+    if (!point.v) point.s = old?.point.s ?? 0;
+    return point;
+  }
+  const point = preview ?? decode(stored),
+    { h: hue, s, v } = point;
+  const color = preview ? rgb(hue, s, v) : stored;
+  function choose(value: string, next = decode(value)) {
+    memory.current[slot] = { hex: value, point: next };
+    if (stored !== value) preferences({ [slot]: value });
+    const targets = nodes.filter((n) => {
+      const key = paintChannel(n);
+      return key && n[key] !== value;
+    });
+    if (targets.length)
       studio.mutate("Цвет слоя", () => {
-        for (const n of nodes) {
-          if (["path", "arrow", "line"].includes(n.kind)) n.stroke = value;
-          else if (!["image", "group"].includes(n.kind)) n.fill = value;
-        }
+        for (const n of targets) n[paintChannel(n)!] = value;
       });
   }
-  function pick(e: React.PointerEvent<HTMLElement>) {
+  function begin(e: React.PointerEvent<HTMLElement>) {
+    if (e.button !== 0 || drag.current) return false;
+    drag.current = {
+      id: e.pointerId,
+      surface: document.querySelector<SVGSVGElement>("svg.surface"),
+      point,
+      raf: null,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    return true;
+  }
+  function show(next: HSV) {
+    const d = drag.current;
+    if (!d) return;
+    d.point = next;
+    if (d.raf !== null) return;
+    d.raf = requestAnimationFrame(() => {
+      d.raf = null;
+      const { h, s, v } = d.point;
+      d.surface?.style.setProperty("--gigma-paint", rgb(h, s, v));
+      setPreview(d.point);
+    });
+  }
+  function end(next: HSV | null) {
+    const d = drag.current;
+    if (!d) return;
+    drag.current = null;
+    if (d.raf !== null) cancelAnimationFrame(d.raf);
+    try {
+      if (next) choose(rgb(next.h, next.s, next.v), next);
+    } finally {
+      d.surface?.style.removeProperty("--gigma-paint");
+      setPreview(null);
+    }
+  }
+  useEffect(
+    () => () => {
+      const d = drag.current;
+      if (d) {
+        if (d.raf !== null) cancelAnimationFrame(d.raf);
+        d.surface?.style.removeProperty("--gigma-paint");
+        drag.current = null;
+      }
+    },
+    [],
+  );
+  const owns = (id: number) => drag.current?.id === id;
+  function pick(e: React.PointerEvent<HTMLElement>): HSV {
     const r = e.currentTarget.getBoundingClientRect();
-    return rgb(
-      hue,
-      Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)),
-      1 - Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)),
-    );
+    return {
+      h: drag.current?.point.h ?? hue,
+      s: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)),
+      v: 1 - Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)),
+    };
   }
   return (
     <details className="art-section" open>
@@ -101,15 +169,15 @@ export function ColorPanel({ nodes }: { nodes: DesignNode[] }) {
         <div className="chips">
           <button
             title="Основной цвет"
-            aria-pressed={!background}
-            style={{ background: p.foreground }}
-            onClick={() => setBackground(false)}
+            aria-pressed={slot === "foreground"}
+            style={{ background: slot === "foreground" ? color : p.foreground }}
+            onClick={() => preferences({ paintSlot: "foreground" })}
           />
           <button
-            title="Фоновый цвет кадра"
-            aria-pressed={background}
-            style={{ background: p.background }}
-            onClick={() => setBackground(true)}
+            title="Дополнительный цвет"
+            aria-pressed={slot === "background"}
+            style={{ background: slot === "background" ? color : p.background }}
+            onClick={() => preferences({ paintSlot: "background" })}
           />
           <button
             title="Поменять цвета местами"
@@ -127,17 +195,20 @@ export function ColorPanel({ nodes }: { nodes: DesignNode[] }) {
           className="spectrum"
           style={{ backgroundColor: "hsl(" + hue + " 100% 50%)" }}
           onPointerDown={(e) => {
-            e.currentTarget.setPointerCapture(e.pointerId);
-            setDragColor(pick(e));
+            if (begin(e)) show(pick(e));
           }}
           onPointerMove={(e) => {
-            if (e.buttons === 1) setDragColor(pick(e));
+            if (owns(e.pointerId)) show(pick(e));
           }}
           onPointerUp={(e) => {
-            choose(pick(e));
-            setDragColor(null);
+            if (owns(e.pointerId)) end(pick(e));
           }}
-          onPointerCancel={() => setDragColor(null)}
+          onPointerCancel={(e) => {
+            if (owns(e.pointerId)) end(null);
+          }}
+          onLostPointerCapture={(e) => {
+            if (owns(e.pointerId)) end(null);
+          }}
         >
           <i style={{ left: s * 100 + "%", top: (1 - v) * 100 + "%" }} />
         </div>
@@ -148,16 +219,34 @@ export function ColorPanel({ nodes }: { nodes: DesignNode[] }) {
           max="359"
           aria-label="Тон палитры"
           value={Math.round(hue)}
+          onPointerDown={begin}
           onChange={(e) => {
-            setHue(e.target.valueAsNumber);
-            choose(rgb(e.target.valueAsNumber, s || 1, v || 1));
+            const next = {
+              ...(drag.current?.point ?? point),
+              h: e.target.valueAsNumber,
+            };
+            if (drag.current) show(next);
+            else choose(rgb(next.h, next.s, next.v), next);
+          }}
+          onPointerUp={(e) => {
+            if (owns(e.pointerId)) end(drag.current!.point);
+          }}
+          onPointerCancel={(e) => {
+            if (owns(e.pointerId)) end(null);
+          }}
+          onLostPointerCapture={(e) => {
+            if (owns(e.pointerId)) end(null);
           }}
         />
       </div>
       <label className="color-value">
         <input
           type="color"
-          aria-label={background ? "Цвет фона кадра" : "Цвет рисования"}
+          aria-label={
+            slot === "background"
+              ? "Дополнительный цвет рисования"
+              : "Цвет рисования"
+          }
           value={color}
           onChange={(e) => choose(e.target.value)}
         />

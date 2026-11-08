@@ -24,8 +24,16 @@ const esc = (v: string) =>
         "'": "&apos;",
       })[c]!,
   );
-export function nodeSVG(n: DesignNode): string {
-  const style = `fill-opacity="${n.fillOpacity ?? 1}" fill="${n.fill}" stroke="${n.stroke}" stroke-width="${n.strokeWidth}" opacity="${n.opacity}"`;
+export function paintChannel(n: DesignNode): "fill" | "stroke" | null {
+  if (n.kind === "image" || n.kind === "group") return null;
+  return ["line", "arrow", "path"].includes(n.kind) ? "stroke" : "fill";
+}
+export function nodeSVG(n: DesignNode, preview = false): string {
+  const channel = preview ? paintChannel(n) : null;
+  const fill = channel === "fill" ? `var(--gigma-paint, ${n.fill})` : n.fill;
+  const stroke =
+    channel === "stroke" ? `var(--gigma-paint, ${n.stroke})` : n.stroke;
+  const style = `fill-opacity="${n.fillOpacity ?? 1}" fill="${fill}" stroke="${stroke}" stroke-width="${n.strokeWidth}" opacity="${n.opacity}"`;
   let inner = "";
   if (n.kind === "rect" || n.kind === "frame")
     inner = `<rect width="${n.width}" height="${n.height}" rx="${Math.min(n.radius, n.width / 2, n.height / 2)}" ${style}/>`;
@@ -50,13 +58,13 @@ export function nodeSVG(n: DesignNode): string {
           { x: 0, y: 0 },
           { x: n.width, y: n.height },
         ];
-    inner = `<polyline points="${points.map((p) => `${p.x},${p.y}`).join(" ")}" fill="none" stroke="${n.stroke}" stroke-width="${n.strokeWidth}" stroke-linejoin="round" stroke-linecap="round" opacity="${n.opacity}"/>`;
+    inner = `<polyline points="${points.map((p) => `${p.x},${p.y}`).join(" ")}" fill="none" stroke="${stroke}" stroke-width="${n.strokeWidth}" stroke-linejoin="round" stroke-linecap="round" opacity="${n.opacity}"/>`;
     if (n.kind === "path" && points.some((p) => p.pressure !== undefined)) {
       const first = points[0],
         last = points[points.length - 1];
       inner =
         '<g fill="' +
-        n.stroke +
+        stroke +
         '" opacity="' +
         n.opacity +
         '"><path d="' +
@@ -81,7 +89,7 @@ export function nodeSVG(n: DesignNode): string {
         p = points.at(-2)!,
         a = Math.atan2(e.y - p.y, e.x - p.x),
         r = Math.max(8, n.strokeWidth * 4);
-      inner += `<path d="M ${e.x - r * Math.cos(a - 0.45)} ${e.y - r * Math.sin(a - 0.45)} L ${e.x} ${e.y} L ${e.x - r * Math.cos(a + 0.45)} ${e.y - r * Math.sin(a + 0.45)}" fill="none" stroke="${n.stroke}" stroke-width="${n.strokeWidth}" stroke-linecap="round" opacity="${n.opacity}"/>`;
+      inner += `<path d="M ${e.x - r * Math.cos(a - 0.45)} ${e.y - r * Math.sin(a - 0.45)} L ${e.x} ${e.y} L ${e.x - r * Math.cos(a + 0.45)} ${e.y - r * Math.sin(a + 0.45)}" fill="none" stroke="${stroke}" stroke-width="${n.strokeWidth}" stroke-linecap="round" opacity="${n.opacity}"/>`;
     }
   }
   if (n.kind === "text") {
@@ -91,7 +99,7 @@ export function nodeSVG(n: DesignNode): string {
         : n.textAlign === "right"
           ? n.width
           : 0;
-    inner = `<text x="${x}" y="${n.fontSize}" fill="${n.fill}" opacity="${n.opacity}" font-size="${n.fontSize}" font-family="${esc(n.fontFamily)}, sans-serif" font-weight="${n.fontWeight}" text-anchor="${n.textAlign === "center" ? "middle" : n.textAlign === "right" ? "end" : "start"}" xml:space="preserve" fill-opacity="${n.fillOpacity ?? 1}">${textLines(
+    inner = `<text x="${x}" y="${n.fontSize}" fill="${fill}" opacity="${n.opacity}" font-size="${n.fontSize}" font-family="${esc(n.fontFamily)}, sans-serif" font-weight="${n.fontWeight}" text-anchor="${n.textAlign === "center" ? "middle" : n.textAlign === "right" ? "end" : "start"}" xml:space="preserve" fill-opacity="${n.fillOpacity ?? 1}">${textLines(
       n,
     )
       .map(
