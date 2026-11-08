@@ -99,11 +99,29 @@ function readElement(el: Element, level = 0): VectorElement | null {
 export function illustratorDocument(payload: IllustratorArtwork) {
   const doc = newDocument(payload.name.trim().slice(0, 200) || "Illustrator");
   const nodes = doc.pages[0].nodes;
+  const warnings = new Set<string>();
   const meta = new Map<string, Meta>(),
     boards: { name: string; rect: number[] }[] = [];
   for (const line of payload.layers.trim().split(/\r\n?|\n/)) {
     const [kind, id, parent, type, name, hidden, locked, b] = line.split("\t");
-    if (kind === "B")
+    if (kind === "R") {
+      if (Number(id) > 0)
+        warnings.add(
+          "Восстановлено изображений из встроенной копии AI: " +
+            Number(id) +
+            ".",
+        );
+      if (Number(type) > 0)
+        warnings.add(
+          "Для части восстановленных изображений использована копия в разрешении экспорта Illustrator.",
+        );
+      if (Number(parent) > 0)
+        warnings.add(
+          "Недоступны исходники для " +
+            Number(parent) +
+            " изображений. Их места отмечены рамкой, а слои подписаны «Нет связанного файла».",
+        );
+    } else if (kind === "B")
       boards.push({ name: decodeURIComponent(id), rect: rect(parent) });
     else if (kind === "N")
       meta.set(id, {
@@ -126,6 +144,40 @@ export function illustratorDocument(payload: IllustratorArtwork) {
     e.children.forEach(index);
   }
   index(root);
+  if (payload.pixels) {
+    const full = new DOMParser().parseFromString(
+      payload.pixels,
+      "image/svg+xml",
+    );
+    if (full.documentElement.localName !== "svg")
+      throw Error("Повреждена копия восстановленных изображений.");
+    // Illustrator can represent repeated bitmaps as local <use> references.
+    function href(el: Element) {
+      return (
+        el.getAttributeNS("http://www.w3.org/1999/xlink", "href") ??
+        el.getAttribute("href") ??
+        ""
+      );
+    }
+    for (const named of full.querySelectorAll("[id]")) {
+      const id = named.getAttribute("id")!;
+      if (!meta.has(id)) continue;
+      let pixel: Element | null = named;
+      if (pixel.localName === "use" && href(pixel).startsWith("#"))
+        pixel = full.getElementById(href(pixel).slice(1));
+      if (pixel?.localName !== "image") continue;
+      const uri = href(pixel).replace(/\s/g, "");
+      if (!uri.startsWith("data:image/") || !allowedAttribute("href", uri))
+        throw Error("Неверные пиксельные данные Illustrator.");
+      let target = items.get(id);
+      if (target?.tag === "use" && target.attrs.href?.startsWith("#"))
+        target = items.get(target.attrs.href.slice(1));
+      if (target?.tag === "image") {
+        target.attrs.href = uri;
+        target.attrs.preserveAspectRatio = "none";
+      }
+    }
+  }
   // Measure only sanitized drawing primitives. The detached source XML never enters the active DOM.
   const prefix = "measure" + crypto.randomUUID() + "-";
   const scratch = document.createElementNS(ns, "svg");
@@ -188,7 +240,6 @@ export function illustratorDocument(payload: IllustratorArtwork) {
     }
     const groups = new Map<string, DesignNode>(),
       seen = new Set<string>();
-    const warnings = new Set<string>();
     function groupFor(id: string): DesignNode | undefined {
       if (!id) return;
       const existing = groups.get(id);
@@ -320,6 +371,8 @@ export function illustratorDocument(payload: IllustratorArtwork) {
         (e.attrs.href?.length ?? 0) <= 15e6 &&
         /^data:image\/(png|jpeg|webp);base64,/.test(e.attrs.href || "") &&
         (!e.attrs.transform || e.attrs.transform.startsWith("matrix(")) &&
+        (!e.attrs.preserveAspectRatio ||
+          e.attrs.preserveAspectRatio === "none") &&
         matrix[0] > 0 &&
         matrix[3] > 0 &&
         matrix[1] === 0 &&
@@ -333,6 +386,7 @@ export function illustratorDocument(payload: IllustratorArtwork) {
             "width",
             "height",
             "overflow",
+            "preserveAspectRatio",
             "transform",
             "opacity",
           ].includes(a),

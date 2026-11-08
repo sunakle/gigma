@@ -17,6 +17,7 @@ import {
 } from "node:fs/promises";
 import { validateDocument, type IllustratorArtwork } from "../shared/model";
 import { exportSVG } from "../src/core/svg";
+import { PDFDocument, PDFName } from "pdf-lib";
 const run = promisify(execFile);
 let running = false;
 async function bridge<T>(job: (dir: string) => Promise<T>) {
@@ -75,6 +76,32 @@ async function checkSize(path: string, limit: number) {
   if (!size || size > limit * 1024 * 1024)
     throw Error("Размер файла выходит за предел " + limit + " МиБ.");
 }
+async function prepareRecoveryPDF(source: string, dir: string) {
+  const bytes = await readFile(source);
+  let publicPDF: Uint8Array | undefined;
+  if (bytes.subarray(0, 5).toString("ascii") === "%PDF-") {
+    try {
+      const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
+      // Prevent Illustrator from reopening the private AI editing data. Keep the public
+      // page resources, alpha masks, optional content and original pixel streams intact.
+      for (const dictionary of [
+        pdf.catalog,
+        ...pdf.getPages().map((page) => page.node),
+      ]) {
+        dictionary.delete(PDFName.of("PieceInfo"));
+        dictionary.delete(PDFName.of("Metadata"));
+      }
+      publicPDF = await pdf.save({
+        useObjectStreams: false,
+        updateFieldAppearances: false,
+      });
+    } catch {
+      /* Legacy AI and non-readable PDF renditions can still open with marked missing images. */
+    }
+  }
+  if (publicPDF) await writeFile(join(dir, "recovery.pdf"), publicPDF);
+  await writeFile(join(dir, "links.ready"), "");
+}
 export async function openIllustratorFile(
   path: string,
 ): Promise<IllustratorArtwork> {
@@ -109,19 +136,39 @@ export async function openIllustratorFile(
       await copyFile(path, source, constants.COPYFILE_EXCL);
     }
     try {
-      const command = await readFile(
-        join(__dirname, "illustrator-import.jsx"),
-        "utf8",
+      const [links, importer] = await Promise.all(
+        ["illustrator-links.jsx", "illustrator-import.jsx"].map((name) =>
+          readFile(join(__dirname, name), "utf8"),
+        ),
       );
+      const command = links + "\n" + importer;
       await runScript(dir, source, command);
+      const needsRecovery = await stat(join(dir, "links.request")).then(
+        () => true,
+        (err) => {
+          if (err.code === "ENOENT") return false;
+          throw err;
+        },
+      );
+      if (needsRecovery) {
+        await prepareRecoveryPDF(source, dir);
+        await runScript(dir, source, command);
+      }
       const svg = join(dir, "result.svg"),
         manifest = join(dir, "layers.tsv");
       await checkSize(svg, 40);
       await checkSize(manifest, 8);
+      const pixelFile = join(dir, "pixels.svg");
+      const pixels = await stat(pixelFile).catch((err) => {
+        if (err.code !== "ENOENT") throw err;
+        return null;
+      });
+      if (pixels) await checkSize(pixelFile, 40);
       return {
         name: basename(path, extname(path)),
         svg: await readFile(svg, "utf8"),
         layers: await readFile(manifest, "utf8"),
+        ...(pixels ? { pixels: await readFile(pixelFile, "utf8") } : {}),
       };
     } finally {
       await rm(source, { force: true });

@@ -4,6 +4,7 @@ import {
   mkdir,
   copyFile,
   readFile,
+  rename,
   writeFile,
 } from "node:fs/promises";
 import { execFile } from "node:child_process";
@@ -142,6 +143,7 @@ test("Открытие и размещение настоящего AI со сл
     "base64",
   );
   await writeFile(join(dir, "pixels.png"), image);
+  await writeFile(join(dir, "detachable.png"), image);
   await promisify(execFile)(
     "powershell.exe",
     [
@@ -297,6 +299,59 @@ test("Открытие и размещение настоящего AI со сл
     );
     expect(String.fromCharCode(...ai)).toBe("%PDF-");
     expect(await readFile(path)).toEqual(original);
+    await rename(join(dir, "detachable.png"), join(dir, "moved-source.png"));
+    await p.getByRole("button", { name: "Поместить AI", exact: true }).click();
+    await expect(p.getByRole("alert")).toContainText(
+      "Восстановлено изображений из встроенной копии AI: 1",
+      { timeout: 90000 },
+    );
+    await expect(p.getByRole("alert")).toContainText(
+      "Недоступны исходники для 1",
+    );
+    await p.keyboard.press("Control+s");
+    await expect(
+      p.getByRole("status", { name: "Состояние сохранения" }),
+    ).toHaveText("Все изменения сохранены");
+    const recovered = await p.evaluate(
+      async (original) => {
+        const api = window.gigma!;
+        const saved = (await api.load((await api.list())[0].id)).document;
+        const bitmap = [...saved.pages[0].nodes]
+          .reverse()
+          .find((n) => n.name === "Архивное фото" && n.kind === "image")!;
+        async function pixels(uri: string) {
+          const image = new Image();
+          image.src = uri;
+          await image.decode();
+          const canvas = document.createElement("canvas");
+          canvas.width = image.naturalWidth;
+          canvas.height = image.naturalHeight;
+          const ctx = canvas.getContext("2d")!;
+          ctx.drawImage(image, 0, 0);
+          return {
+            width: canvas.width,
+            height: canvas.height,
+            rgba: Array.from(
+              ctx.getImageData(0, 0, canvas.width, canvas.height).data,
+            ),
+          };
+        }
+        return {
+          actual: await pixels(bitmap.image),
+          original: await pixels(original),
+        };
+      },
+      "data:image/png;base64," + image.toString("base64"),
+    );
+    expect(recovered.actual).toEqual(recovered.original);
+    await expect(
+      p.getByRole("button", {
+        name: "Выбрать слой Нет связанного файла — Вне областей",
+        exact: true,
+      }),
+    ).toHaveCount(1);
+    await p.getByTitle("Отменить (Ctrl Z)").click();
+    await expect(p.locator(".surface [data-object]")).toHaveCount(before);
     const damaged = join(dir, "broken.ai");
     await writeFile(damaged, "invalid document");
     await app.evaluate(({ dialog }, file) => {

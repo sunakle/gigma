@@ -31,3 +31,5 @@ await copyFile(
   "desktop/illustrator-import.jsx",
   "build/illustrator-import.jsx",
 );
+
+await copyFile("desktop/illustrator-links.jsx", "build/illustrator-links.jsx");

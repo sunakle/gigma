@@ -131,7 +131,12 @@ export type Summary = {
 };
 export type LoadResult = { document: DesignDocument; recovered: boolean };
 export type SaveResult = { revision: number; updatedAt: string };
-export type IllustratorArtwork = { name: string; svg: string; layers: string };
+export type IllustratorArtwork = {
+  name: string;
+  svg: string;
+  layers: string;
+  pixels?: string;
+};
 export interface StorageAPI {
   list(): Promise<Summary[]>;
   load(id: string): Promise<LoadResult>;

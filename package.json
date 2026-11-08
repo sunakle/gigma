@@ -1,6 +1,6 @@
 {
   "name": "gigma",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "description": "Локальный редактор дизайна и визуальных документов",
   "author": "sunakle",
@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "lucide-react": "1.70.0",
+    "pdf-lib": "1.17.1",
     "proper-lockfile": "4.1.2",
     "react": "19.3.1",
     "react-dom": "19.3.1",

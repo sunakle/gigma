@@ -77,6 +77,17 @@
     last.name = "Дальний";
     last.fillColor = ink;
     last.stroked = false;
+    // One link has a public rendition on artboard two. The pasteboard link has none.
+    var savedLink = bottom.placedItems.add();
+    savedLink.file = new File(folder + "/detachable.png");
+    savedLink.name = "Архивное фото";
+    savedLink.width = 11.7;
+    savedLink.height = 11.7;
+    savedLink.position = [540.3, 130.7];
+    var offBoard = bottom.placedItems.add();
+    offBoard.file = new File(folder + "/detachable.png");
+    offBoard.name = "Вне областей";
+    offBoard.position = [900, 130];
     var opts = new IllustratorSaveOptions();
     opts.pdfCompatible = true;
     doc.artboards.setActiveArtboardIndex(0);

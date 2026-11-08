@@ -47,17 +47,6 @@
     obj.locked = false;
     if (isLayer) obj.visible = true;
     else obj.hidden = false;
-    if (type === "PlacedItem") {
-      var linked;
-      try {
-        linked = obj.file;
-      } catch (_) {}
-      if (!linked || !linked.exists)
-        throw Error(
-          "Не найдена связанная иллюстрация: " +
-            (name || (linked && linked.name) || "PlacedItem")
-        );
-    }
     obj.name = id;
     var b = !isLayer && obj.visibleBounds;
     var isClip =
@@ -93,9 +82,18 @@
       }
     }
   }
-  var coords = app.coordinateSystem;
+  var coords = app.coordinateSystem,
+    pixels = { doc: null, pairs: [] };
   try {
     app.coordinateSystem = CoordinateSystem.DOCUMENTCOORDINATESYSTEM;
+    var links = recoverIllustratorLinks(d, root, pixels);
+    if (!links) return;
+    row([
+      "R",
+      links.restored,
+      links.unavailable,
+      links.restored - pixels.pairs.length
+    ]);
     var i, board, rect;
     for (i = 0; i < d.artboards.length; i++) {
       board = d.artboards[i];
@@ -128,6 +126,7 @@
     opt.fontType = SVGFontType.OUTLINEFONT;
     opt.cssProperties = SVGCSSPropertyLocation.PRESENTATIONATTRIBUTES;
     d.exportFile(new File(root + "/result.svg"), ExportType.SVG, opt);
+    exportRecoveredPixels(root, pixels, opt);
     var manifest = new File(root + "/layers.tsv");
     manifest.encoding = "UTF-8";
     if (!manifest.open("w")) throw Error("Не удалось записать дерево слоёв.");
@@ -137,6 +136,7 @@
       manifest.close();
     }
   } finally {
+    if (pixels.doc) pixels.doc.close(SaveOptions.DONOTSAVECHANGES);
     app.coordinateSystem = coords;
   }
 })();
