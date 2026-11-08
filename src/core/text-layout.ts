@@ -132,6 +132,18 @@ export function textLines(n: DesignNode) {
   }
   return result;
 }
+export function textHorizontalScale(n: DesignNode) {
+  const stored = n.textScaleX ?? 1;
+  if (n.kind !== "text" || !n.text.trim()) return stored;
+  if (n.textLayout !== "auto" && n.textScaleX === undefined) return stored;
+  const widest = Math.max(
+    1,
+    ...textLines(n).map((line) => measure(n, line.trimEnd())),
+  );
+  if (n.textLayout === "auto" || widest * stored < n.width * 0.12)
+    return Math.max(0.001, Math.min(1000, n.width / widest));
+  return stored;
+}
 export function textVerticalScale(n: DesignNode) {
   const lines = Math.max(1, textLines(n).length);
   const fitted = n.height / (lines * n.fontSize * 1.3);

@@ -262,6 +262,13 @@ export class Studio {
     if (this.document) await this.flush();
     clearTimeout(this.timer);
     this.document = validateDocument(doc);
+    let fontChanged = false;
+    for (const page of this.document.pages)
+      for (const node of page.nodes)
+        if (node.kind === "text" && node.fontFamily !== "Impact") {
+          node.fontFamily = "Impact";
+          fontChanged = true;
+        }
     this.diskRevision = doc.revision;
     this.undoStack = [];
     this.redoStack = [];
@@ -271,8 +278,9 @@ export class Studio {
     this.savedGeneration = 0;
     this.status = "Все изменения сохранены";
     this.error = "";
+    if (fontChanged) this.changed();
     this.emit();
-    this.coverVersion = doc.cover ? this.artworkVersion : -1;
+    this.coverVersion = !fontChanged && doc.cover ? this.artworkVersion : -1;
     this.coverPage = doc.activePageId;
   }
   save() {

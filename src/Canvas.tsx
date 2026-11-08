@@ -29,7 +29,7 @@ import {
 } from "./core/geometry";
 import { usePrefs, preferences } from "./core/preferences";
 import { InlineText } from "./InlineText";
-import { fitText } from "./core/text-layout";
+import { fitText, textHorizontalScale } from "./core/text-layout";
 import { pressureFactor } from "./core/brush";
 import { removeNodes } from "./core/geometry";
 import {
@@ -264,6 +264,8 @@ export function Canvas({
   const commitText = useCallback((node: DesignNode, value: string) => {
     if (value !== node.text)
       studio.mutate("Изменить текст", () => {
+        if (node.textScaleX !== undefined)
+          node.textScaleX = textHorizontalScale(node);
         node.text = value;
         node.textLayout ??= "auto";
         fitText(node);

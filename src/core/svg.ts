@@ -1,6 +1,10 @@
 import type { DesignNode, DesignPage } from "../../shared/model";
 import { bounds, union, type Bounds, descendants } from "./geometry";
-import { textLines, textVerticalScale } from "./text-layout";
+import {
+  textHorizontalScale,
+  textLines,
+  textVerticalScale,
+} from "./text-layout";
 import { vectorXML } from "../../shared/vector";
 import { brushOutline } from "./brush";
 import { adjustmentMarkup } from "../../shared/adjustments";
@@ -110,7 +114,7 @@ export function nodeSVG(n: DesignNode, preview = false): string {
     }
   }
   if (n.kind === "text") {
-    const horizontalScale = n.textScaleX ?? 1;
+    const horizontalScale = textHorizontalScale(n);
     const verticalScale = textVerticalScale(n);
     const x =
       n.textAlign === "center"

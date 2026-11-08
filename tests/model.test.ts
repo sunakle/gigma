@@ -20,7 +20,12 @@ import {
   screenToWorld,
 } from "../src/core/geometry";
 import { exportSVG } from "../src/core/svg";
-import { fitText, textLines, textVerticalScale } from "../src/core/text-layout";
+import {
+  fitText,
+  textHorizontalScale,
+  textLines,
+  textVerticalScale,
+} from "../src/core/text-layout";
 describe("Файловое хранилище", () => {
   let folder: string, store: DocumentStore;
   beforeEach(async () => {
@@ -93,6 +98,15 @@ describe("Геометрия и формат", () => {
     expect(
       textVerticalScale(n) * textLines(n).length * n.fontSize * 1.3,
     ).toBeLessThanOrEqual(height);
+  });
+  it("восстанавливает ширину слишком сжатого текста в широкой рамке", () => {
+    const n = newNode("text", 0, 0, 1000, 120);
+    n.text = "лес";
+    n.fontSize = 80;
+    n.textLayout = "auto";
+    n.textScaleX = 0.001;
+    expect(textHorizontalScale(n)).toBeGreaterThan(1);
+    expect(n.textScaleX).toBe(0.001);
   });
   it("вкладывает группу в группу и запрещает цикл", () => {
     const p = newPage(),

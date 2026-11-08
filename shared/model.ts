@@ -276,7 +276,7 @@ export function newNode(
     locked: false,
     text: kind === "text" ? "Текст" : "",
     fontSize: 24,
-    fontFamily: "Inter",
+    fontFamily: "Impact",
     fontWeight: "400",
     textAlign: "left",
     points: [],

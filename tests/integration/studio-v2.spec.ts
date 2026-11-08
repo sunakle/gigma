@@ -729,6 +729,20 @@ test("Рамка внутри слоя выбирает только задет�
     await p
       .getByRole("button", { name: "Проверка выделения", exact: false })
       .click();
+    await p
+      .locator(".layer-row")
+      .filter({
+        has: p.getByRole("button", { name: "Выбрать слой Слой Illustrator" }),
+      })
+      .getByTitle("Развернуть")
+      .click();
+    await p
+      .locator(".layer-row")
+      .filter({
+        has: p.getByRole("button", { name: "Выбрать слой Группа с соседом" }),
+      })
+      .getByTitle("Развернуть")
+      .click();
     const stage = (await p.getByLabel("Холст").boundingBox())!;
     const mouse = (x: number, y: number) =>
       p.mouse.move(stage.x + 34 + x * 1.5, stage.y + 38 + y * 1.5);
@@ -854,6 +868,85 @@ test("Группы вкладываются, а слои меняют поряд
   }
 });
 
+test("Свёрнутые группы остаются свёрнутыми после повторного открытия", async () => {
+  const app = await launch();
+  try {
+    const p = await app.firstWindow();
+    const doc = newDocument("Память групп");
+    const frame = newNode("frame", 0, 0, 200, 200);
+    const group = newNode("group", 10, 10, 80, 80);
+    group.name = "Группа грибов";
+    group.parentId = frame.id;
+    const child = newNode("rect", 20, 20, 20, 20);
+    child.name = "Гриб";
+    child.parentId = group.id;
+    doc.pages[0].nodes.push(frame, group, child);
+    await p.evaluate((d) => window.gigma!.save(d, 0), doc);
+    const open = async () => {
+      await p.reload();
+      await p.getByRole("button", { name: /Память групп/ }).click();
+    };
+    const groupRow = p.locator(".layer-row").filter({
+      has: p.getByRole("button", { name: "Выбрать слой Группа грибов" }),
+    });
+    const detail = p.getByRole("button", {
+      name: "Выбрать слой Гриб",
+      exact: true,
+    });
+    await open();
+    await expect(detail).toHaveCount(0);
+    await groupRow.getByTitle("Развернуть").click();
+    await expect(detail).toBeVisible();
+    await open();
+    await expect(detail).toBeVisible();
+    await groupRow.getByTitle("Свернуть").click();
+    await expect(detail).toHaveCount(0);
+    await open();
+    await expect(detail).toHaveCount(0);
+  } finally {
+    await app.close();
+  }
+});
+
+test("Старые надписи переходят на Impact и узкая полоска заполняет рамку", async () => {
+  const app = await launch();
+  try {
+    const p = await app.firstWindow();
+    const doc = newDocument("Шрифт Impact");
+    const label = newNode("text", 40, 50, 1000, 120);
+    label.text = "лес";
+    label.fontFamily = "Inter";
+    label.fontSize = 80;
+    label.textLayout = "auto";
+    label.textScaleX = 0.001;
+    doc.pages[0].nodes.push(label);
+    doc.pages[0].view = { x: 80, y: 80, zoom: 0.5 };
+    await p.evaluate((d) => window.gigma!.save(d, 0), doc);
+    await p.reload();
+    await p.getByRole("button", { name: /Шрифт Impact/ }).click();
+    await p.getByRole("button", { name: "Выбрать слой Текст" }).click();
+    const shown = p.locator(`.surface [data-object="${label.id}"] text`);
+    await expect(shown).toHaveCSS("font-family", /Impact/);
+    const bounds = (await shown.boundingBox())!;
+    const frame = (await p
+      .locator(".surface .selection rect")
+      .first()
+      .boundingBox())!;
+    expect(bounds.width).toBeGreaterThan(frame.width * 0.7);
+    await expect(p.getByLabel("Гарнитура").locator("option")).toHaveCount(1);
+    await expect(
+      p.getByRole("status", { name: "Состояние сохранения" }),
+    ).toHaveText("Все изменения сохранены");
+    const saved = await p.evaluate(
+      async (id) => (await window.gigma!.load(id)).document.pages[0].nodes,
+      doc.id,
+    );
+    expect(saved.find((n) => n.id === label.id)?.fontFamily).toBe("Impact");
+  } finally {
+    await app.close();
+  }
+});
+
 test("ПКМ отделяет несколько рисунков и слоёв без изменения остальных", async () => {
   const app = await launch();
   try {
@@ -887,6 +980,16 @@ test("ПКМ отделяет несколько рисунков и слоёв 
     await p.getByRole("button", { name: /Отделение рисунков/ }).click();
     const layer = (name: string) =>
       p.getByRole("button", { name: "Выбрать слой " + name });
+    await p
+      .locator(".layer-row")
+      .filter({ has: layer("Основной слой") })
+      .getByTitle("Развернуть")
+      .click();
+    await p
+      .locator(".layer-row")
+      .filter({ has: layer("Гриб") })
+      .getByTitle("Развернуть")
+      .click();
     const saved = async () => {
       await p.keyboard.press("Control+s");
       await expect(
@@ -918,6 +1021,11 @@ test("ПКМ отделяет несколько рисунков и слоёв 
     });
     expect(updated.find((n) => n.id === stem.id)?.parentId).toBe(separated.id);
     expect(updated.find((n) => n.id === other.id)?.parentId).toBe(neighbor.id);
+    await p
+      .locator(".layer-row")
+      .filter({ has: layer("Отделённый слой 1") })
+      .getByTitle("Развернуть")
+      .click();
     await layer("Шляпка").click({ button: "right" });
     await p.getByRole("menuitem", { name: "Вынести на уровень выше" }).click();
     updated = await saved();
@@ -1068,7 +1176,7 @@ test("Текст растягивается по ширине и высоте и
     await p.reload();
     await p.getByRole("button", { name: /Деформация текста/ }).click();
     await p.getByRole("button", { name: "Выбрать слой Текст" }).click();
-    await p.getByLabel("Гарнитура").selectOption("Impact");
+    await expect(p.getByLabel("Гарнитура").locator("option")).toHaveCount(1);
     const shown = p.locator(`.surface [data-object="${label.id}"] text`);
     await expect(shown).toHaveCSS("font-family", /Impact/);
     const initialWidth = (await shown.boundingBox())!.width;
@@ -1161,7 +1269,11 @@ test("Многострочный растянутый текст не выход
       );
     };
     await withinFrame();
-    await text.dblclick();
+    const textBox = (await text.boundingBox())!;
+    await p.mouse.dblclick(
+      textBox.x + textBox.width / 2,
+      textBox.y + textBox.height / 2,
+    );
     await p.getByLabel("Текст на холсте").fill("грибочек лес");
     await p.getByLabel("Текст на холсте").press("Control+Enter");
     await withinFrame();

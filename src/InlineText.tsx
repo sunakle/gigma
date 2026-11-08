@@ -1,6 +1,11 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { DesignNode } from "../shared/model";
-import { fitText, nativeBaseline, textVerticalScale } from "./core/text-layout";
+import {
+  fitText,
+  nativeBaseline,
+  textHorizontalScale,
+  textVerticalScale,
+} from "./core/text-layout";
 import { nodeSVG } from "./core/svg";
 
 export function InlineText({
@@ -14,6 +19,8 @@ export function InlineText({
   const [value, setValue] = useState(node.text);
   const draft = { ...node, text: value };
   if (value !== node.text) {
+    if (node.textScaleX !== undefined)
+      draft.textScaleX = textHorizontalScale(node);
     draft.textLayout ??= "auto";
     fitText(draft);
   }
@@ -22,7 +29,7 @@ export function InlineText({
     input.current?.select();
   }, []);
   const offset = draft.fontSize - nativeBaseline(draft);
-  const horizontalScale = draft.textScaleX ?? 1;
+  const horizontalScale = textHorizontalScale(draft);
   const verticalScale = textVerticalScale(draft);
   return (
     <>

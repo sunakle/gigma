@@ -1,7 +1,7 @@
 import { ColorPanel, Adjustments, LayerControls } from "./ArtPanels";
 import { BrushPanel } from "./Settings";
 import { imageSampling } from "./core/svg";
-import { fitText } from "./core/text-layout";
+import { fitText, textHorizontalScale } from "./core/text-layout";
 import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   AlignHorizontalJustifyCenter,
@@ -122,12 +122,37 @@ export const LayersPanel = memo(function LayersPanel({
   selection: string[];
   onContextSelection: (x: number, y: number, ids: string[]) => void;
 }) {
-  const [fold, setFold] = useState(new Set<string>()),
-    doc = studio.document!;
+  const doc = studio.document!;
+  const expandedKey = `gigma:expanded:${doc.id}:${page.id}`;
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem(expandedKey);
+      if (saved !== null) {
+        const ids = JSON.parse(saved);
+        if (Array.isArray(ids))
+          return new Set(
+            ids.filter((id): id is string => typeof id === "string"),
+          );
+      }
+    } catch {
+      /* Fall back to the default view. */
+    }
+    return new Set(
+      page.nodes.filter((n) => n.kind === "frame").map((n) => n.id),
+    );
+  });
+  function rememberExpanded(next: Set<string>) {
+    setExpanded(next);
+    try {
+      localStorage.setItem(expandedKey, JSON.stringify([...next]));
+    } catch {
+      /* Keep the current view. */
+    }
+  }
   function toggle(id: string) {
-    const s = new Set(fold);
-    if (!s.delete(id)) s.add(id);
-    setFold(s);
+    const next = new Set(expanded);
+    if (!next.delete(id)) next.add(id);
+    rememberExpanded(next);
   }
   const [filter, setFilter] = useState("all");
   const list = useRef<HTMLDivElement>(null);
@@ -163,14 +188,14 @@ export const LayersPanel = memo(function LayersPanel({
         const n = peers[i];
         if (filter !== "all" && n.kind !== filter && !container(n)) continue;
         const has = children.has(n.id),
-          closed = fold.has(n.id);
+          closed = !expanded.has(n.id);
         ordered.push({ n, depth, has, closed });
         if (has && !closed) visit(n.id, depth + 1);
       }
     }
     visit(null, 0);
     return ordered;
-  }, [page, artworkVersion, filter, fold, page.nodes.length]);
+  }, [page, artworkVersion, filter, expanded, page.nodes.length]);
   const rowHeight = 29;
   const start = Math.max(
     0,
@@ -255,6 +280,7 @@ export const LayersPanel = memo(function LayersPanel({
       studio.mutate("Перенести в группу", (_, activePage) => {
         reparentNode(activePage, id, parentId);
       });
+      if (parentId) rememberExpanded(new Set([...expanded, parentId]));
     }
     studio.select([id]);
   }
@@ -457,6 +483,8 @@ export const LayersPanel = memo(function LayersPanel({
               studio.mutate("Создать группу", (_, activePage) =>
                 activePage.nodes.push(group),
               );
+              if (group.parentId)
+                rememberExpanded(new Set([...expanded, group.parentId]));
               studio.select([group.id]);
             }}
           >
@@ -570,6 +598,8 @@ export function Inspector({
   function assign(patch: Partial<DesignNode>) {
     studio.mutate("Свойства объекта", () => {
       for (const o of nodes) {
+        if (o.kind === "text" && "text" in patch && o.textScaleX !== undefined)
+          o.textScaleX = textHorizontalScale(o);
         Object.assign(o, patch);
         if (
           o.kind === "text" &&
@@ -804,19 +834,8 @@ export function Inspector({
               />
               <label className="stack">
                 Гарнитура
-                <select
-                  value={n.fontFamily}
-                  onChange={(e) =>
-                    assign({
-                      fontFamily: e.target.value as DesignNode["fontFamily"],
-                    })
-                  }
-                >
-                  {["Inter", "Arial", "Georgia", "Impact", "monospace"].map(
-                    (v) => (
-                      <option key={v}>{v}</option>
-                    ),
-                  )}
+                <select aria-label="Гарнитура" value="Impact" disabled>
+                  <option value="Impact">Impact</option>
                 </select>
               </label>
               <div className="fields">
