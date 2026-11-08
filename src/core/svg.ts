@@ -1,6 +1,7 @@
 import type { DesignNode, DesignPage } from "../../shared/model";
 import { bounds, union, type Bounds, descendants } from "./geometry";
 import { textLines } from "./text-layout";
+import { vectorXML } from "../../shared/vector";
 import { brushOutline } from "./brush";
 import { adjustmentMarkup } from "../../shared/adjustments";
 export function effectDefs(n: DesignNode, id: string) {
@@ -25,8 +26,16 @@ const esc = (v: string) =>
       })[c]!,
   );
 export function paintChannel(n: DesignNode): "fill" | "stroke" | null {
-  if (n.kind === "image" || n.kind === "group") return null;
-  return ["line", "arrow", "path"].includes(n.kind) ? "stroke" : "fill";
+  if (
+    n.kind === "image" ||
+    (n.kind === "vector" && !n.artwork?.editablePaint) ||
+    n.kind === "group"
+  )
+    return null;
+  return ["line", "arrow", "path"].includes(n.kind) ||
+    (n.kind === "vector" && n.fill === "none" && n.stroke !== "none")
+    ? "stroke"
+    : "fill";
 }
 export function nodeSVG(n: DesignNode, preview = false): string {
   const channel = preview ? paintChannel(n) : null;
@@ -107,6 +116,11 @@ export function nodeSVG(n: DesignNode, preview = false): string {
           `<tspan x="${x}" dy="${i ? n.fontSize * 1.3 : 0}">${esc(line) || " "}</tspan>`,
       )
       .join("")}</text>`;
+  }
+  if (n.kind === "vector" && n.artwork) {
+    const { box, elements, editablePaint } = n.artwork;
+    const paint = editablePaint ? style : `opacity="${n.opacity}"`;
+    inner = `<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="${n.width}" height="${n.height}" viewBox="${box.join(" ")}" preserveAspectRatio="none" overflow="visible" ${paint}>${elements.map((e) => vectorXML(e, "ai-" + n.id + "-")).join("")}</svg>`;
   }
   if (n.kind === "image" && n.image)
     inner = `<image href="${esc(n.image)}" width="${n.width}" height="${n.height}" preserveAspectRatio="none" opacity="${n.opacity}"/>`;

@@ -39,7 +39,7 @@ export type Tool =
   | "picker"
   | "eraser"
   | "direct"
-  | Exclude<Kind, "image" | "group">;
+  | Exclude<Kind, "image" | "group" | "vector">;
 type Gesture = {
   type: "draw" | "move" | "resize" | "marquee" | "pan" | "erase" | "edit";
   pointerId: number;

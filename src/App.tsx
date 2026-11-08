@@ -44,6 +44,7 @@ import {
 } from "../shared/model";
 import { Canvas, fitPage, Scene, zoomAt, type Tool } from "./Canvas";
 import { Inspector, LayersPanel } from "./Panels";
+import { illustratorDocument } from "./core/illustrator";
 import { textLines } from "./core/text-layout";
 import { Settings } from "./Settings";
 import { usePrefs } from "./core/preferences";
@@ -69,6 +70,7 @@ import {
   removeNodes,
   roots,
   ungroupNodes,
+  union,
 } from "./core/geometry";
 import { download, exportSVG, fileName, svgPNG } from "./core/svg";
 
@@ -111,8 +113,7 @@ export default function App() {
     [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const importInput = useRef<HTMLInputElement>(null),
-    imageInput = useRef<HTMLInputElement>(null),
-    aiInput = useRef<HTMLInputElement>(null);
+    imageInput = useRef<HTMLInputElement>(null);
   const clip = useRef<{ ids: string[]; nodes: DesignNode[] } | null>(null);
   const report = useCallback(
     (e: unknown) => setNotice(e instanceof Error ? e.message : String(e)),
@@ -195,6 +196,57 @@ export default function App() {
     d.revision = 0;
     d.createdAt = new Date().toISOString();
     await open(d);
+  }
+  async function importAI(place: boolean) {
+    if (busy || !window.gigma?.openIllustrator) return;
+    const target = studio.document,
+      targetPage = studio.page;
+    setMenu(false);
+    setBusy(true);
+    try {
+      const file = await window.gigma.openIllustrator();
+      if (!file) return;
+      const { document: imported, warnings } = illustratorDocument(file);
+      if (place) {
+        if (
+          !target ||
+          !targetPage ||
+          studio.document !== target ||
+          studio.page !== targetPage
+        )
+          throw Error("Текущий документ изменился. Повторите размещение AI.");
+        const incoming = imported.pages[0].nodes;
+        const wrapper = newNode("group", 0, 0, 1, 1);
+        wrapper.name = imported.name;
+        wrapper.artLayer = true;
+        const box = union(incoming);
+        if (box) Object.assign(wrapper, box);
+        for (const n of incoming) if (!n.parentId) n.parentId = wrapper.id;
+        const combined = {
+          ...target,
+          pages: target.pages.map((p) =>
+            p === targetPage
+              ? { ...p, nodes: [...p.nodes, wrapper, ...incoming] }
+              : p,
+          ),
+        };
+        validateDocument(combined);
+        if (new Blob([JSON.stringify(combined)]).size > 31 * 1024 * 1024)
+          throw Error(
+            "После размещения документ превысит 32 МиБ. Откройте AI отдельно.",
+          );
+        studio.mutate("Поместить AI со слоями", (_, p) =>
+          p.nodes.push(wrapper, ...incoming),
+        );
+        studio.select([wrapper.id]);
+        fitPage(targetPage);
+      } else await open(imported);
+      setNotice(["Открыт AI со слоями.", ...warnings].join(" "));
+    } catch (error) {
+      report(error);
+    } finally {
+      setBusy(false);
+    }
   }
   async function importImage(f: File) {
     if (
@@ -504,6 +556,12 @@ export default function App() {
           open={(d) => void open(d).catch(report)}
           load={(id) => void load(id).catch(report)}
           importFile={() => importInput.current?.click()}
+          openAI={
+            window.gigma?.openIllustrator
+              ? () => void importAI(false)
+              : undefined
+          }
+          busy={busy}
           report={report}
         />
       ) : (
@@ -527,6 +585,15 @@ export default function App() {
                     onClick={() => setMenu(false)}
                   />
                   <div className="dropdown">
+                    {window.gigma?.openIllustrator && (
+                      <button
+                        disabled={busy}
+                        onClick={() => void importAI(false)}
+                      >
+                        <FileInput />
+                        Открыть AI со слоями
+                      </button>
+                    )}
                     <button
                       onClick={() => {
                         setMenu(false);
@@ -591,11 +658,11 @@ export default function App() {
                 aria-label="Поместить AI"
                 title={
                   window.gigma?.illustrator
-                    ? "Поместить первую монтажную область AI как изображение"
+                    ? "Поместить AI со слоями в текущий документ"
                     : "AI доступен в программе для Windows"
                 }
-                disabled={!window.gigma?.illustrator || busy}
-                onClick={() => aiInput.current?.click()}
+                disabled={!window.gigma?.openIllustrator || busy}
+                onClick={() => void importAI(true)}
               >
                 <FileInput />
               </button>
@@ -763,36 +830,6 @@ export default function App() {
           const f = e.target.files?.[0];
           e.target.value = "";
           if (f) void importImage(f).catch(report);
-        }}
-      />
-      <input
-        ref={aiInput}
-        hidden
-        type="file"
-        accept=".ai"
-        aria-label="Файл Illustrator"
-        onChange={async (e) => {
-          const f = e.target.files?.[0];
-          e.target.value = "";
-          if (!f || !window.gigma?.illustrator) return;
-          setBusy(true);
-          try {
-            if (f.size > 32 * 1024 * 1024)
-              throw Error("Файл AI больше 32 МиБ.");
-            const bytes = await window.gigma.illustrator({
-              mode: "import",
-              bytes: new Uint8Array(await f.arrayBuffer()),
-            });
-            await importImage(
-              new window.File([new Uint8Array(bytes)], f.name, {
-                type: "image/png",
-              }),
-            );
-          } catch (err) {
-            report(err);
-          } finally {
-            setBusy(false);
-          }
         }}
       />
       {settings && (

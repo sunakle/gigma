@@ -440,3 +440,9 @@
   border-radius: 2px;
   object-fit: cover;
 }
+
+.home-imports {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

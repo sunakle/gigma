@@ -1,4 +1,5 @@
 import { build } from "esbuild";
+import { copyFile } from "node:fs/promises";
 await build({
   entryPoints: ["desktop/main.ts"],
   outfile: "build/main.cjs",
@@ -25,3 +26,8 @@ await build({
   target: "node22",
   format: "cjs",
 });
+
+await copyFile(
+  "desktop/illustrator-import.jsx",
+  "build/illustrator-import.jsx",
+);

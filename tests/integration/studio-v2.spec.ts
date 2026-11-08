@@ -1,8 +1,16 @@
 import { test, expect, _electron as electron } from "@playwright/test";
-import { mkdtemp, mkdir } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  copyFile,
+  readFile,
+  writeFile,
+} from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { exportSVG } from "../../src/core/svg";
 import { resolve, join } from "node:path";
 import { createRequire } from "node:module";
-import { newDocument, newNode } from "../../shared/model";
 const require = createRequire(import.meta.url);
 async function launch() {
   const base = resolve("test-results/v2");
@@ -11,8 +19,8 @@ async function launch() {
   const env = { ...process.env, GIGMA_TEST_MODE: "1", GIGMA_DATA_DIR: root };
   delete (env as NodeJS.ProcessEnv).ELECTRON_RUN_AS_NODE;
   return electron.launch({
-    args: [resolve(".")],
-    executablePath: require("electron"),
+    args: process.env.GIGMA_TEST_EXECUTABLE ? [] : [resolve(".")],
+    executablePath: process.env.GIGMA_TEST_EXECUTABLE || require("electron"),
     env: env as Record<string, string>,
   });
 }
@@ -117,34 +125,192 @@ test("Текст, перо, цвета, обои и расширения", async
     await app.close();
   }
 });
-test("Illustrator сохраняет AI и открывает его для размещения", async () => {
+test("Открытие и размещение настоящего AI со слоями, кривыми и изображением", async ({}, info) => {
   test.skip(
     process.env.GIGMA_TEST_ILLUSTRATOR !== "1",
-    "Требуется установленный Illustrator для Windows",
+    "Требуется Illustrator для Windows",
   );
-  test.setTimeout(220000);
-  const app = await launch();
+  test.setTimeout(240000);
+  const dir = info.outputPath("ai-fixture");
+  await mkdir(dir, { recursive: true });
+  await copyFile(
+    resolve("tests/integration/illustrator-fixture.jsx"),
+    join(dir, "fixture.jsx"),
+  );
+  const image = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAE0lEQVR4nGOs1zrBAANMcBZeDgBIzQF5oA/Q/gAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  await writeFile(join(dir, "pixels.png"), image);
+  await promisify(execFile)(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "$ErrorActionPreference='Stop'; $ai=New-Object -ComObject Illustrator.Application; $null=$ai.DoJavaScriptFile((Join-Path (Get-Location).Path 'fixture.jsx'))",
+    ],
+    { cwd: dir, timeout: 120000, windowsHide: true },
+  );
+  const path = join(dir, "forest.ai"),
+    original = await readFile(path),
+    app = await launch();
   try {
-    const page = await app.firstWindow();
-    const d = newDocument("Проверка AI");
-    d.pages[0].nodes.push(newNode("rect", 0, 0, 160, 90));
-    const result = await page.evaluate(async (doc) => {
-      const convert = window.gigma!.illustrator!,
-        ai = await convert({ mode: "export", document: doc });
-      const png = await convert({ mode: "import", bytes: ai });
-      return {
-        ai: String.fromCharCode(...ai.slice(0, 5)),
-        png: Array.from(png.slice(0, 8)),
-        width: new DataView(
-          png.buffer,
-          png.byteOffset,
-          png.byteLength,
-        ).getUint32(16),
-      };
-    }, d);
-    expect(result.ai).toBe("%PDF-");
-    expect(result.png).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
-    expect(result.width).toBeGreaterThan(0);
+    // Only the native Windows picker is substituted. Illustrator reads the on-disk AI through the real bridge.
+    await app.evaluate(({ dialog }, p) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [p] });
+    }, path);
+    const p = await app.firstWindow();
+    await p.getByRole("button", { name: "Открыть AI со слоями" }).click();
+    const title = p.getByLabel("Название документа");
+    await expect(title).toHaveValue("forest", { timeout: 45000 });
+    await expect(
+      p.getByRole("status", { name: "Состояние сохранения" }),
+    ).toHaveText("Все изменения сохранены");
+    const d = await p.evaluate(async () => {
+      const api = window.gigma!;
+      return (await api.load((await api.list())[0].id)).document;
+    });
+    const nodes = d.pages[0].nodes,
+      by = (name: string) => nodes.find((n) => n.name === name)!;
+    expect(nodes.filter((n) => n.kind === "frame").map((n) => n.name)).toEqual([
+      "Первая",
+      "Вторая",
+    ]);
+    expect(by("Вторая").x - by("Первая").x).toBeCloseTo(400);
+    expect(by("Скрытый")).toMatchObject({
+      hidden: true,
+      locked: true,
+      parentId: by("Лес").id,
+    });
+    expect(by("Секрет").parentId).toBe(by("Скрытый").id);
+    expect(by("Крона").parentId).toBe(by("Дерево").id);
+    expect(by("Дерево").parentId).toBe(by("Детали").id);
+    expect(by("Детали").parentId).toBe(by("Лес").id);
+    expect(by("Кривая").parentId).toBe(by("Земля").id);
+    expect(by("Кривая").artwork?.editablePaint).toBe(true);
+    expect(by("Заметки")).toMatchObject({
+      kind: "group",
+      artLayer: true,
+      parentId: by("Земля").id,
+    });
+    expect(by("Связанное фото").parentId).toBe(by("Фото в рамке").id);
+    expect(JSON.stringify(by("Градиент").artwork)).toContain("linearGradient");
+    expect(JSON.stringify(by("Кривая").artwork)).toMatch(/[cC]/);
+    expect(
+      nodes.find((n) => n.kind === "image" && n.parentId === by("Дерево").id),
+    ).toMatchObject({
+      parentId: by("Дерево").id,
+      width: 4,
+      height: 4,
+    });
+    expect(
+      nodes
+        .find((n) => n.kind === "image" && n.parentId === by("Дерево").id)!
+        .image.split(",")[1],
+    ).toEqual(image.toString("base64"));
+    expect(nodes.indexOf(by("Земля"))).toBeLessThan(nodes.indexOf(by("Лес")));
+    const first = by("Первая"),
+      svg = exportSVG(d.pages[0])
+        .replace(
+          /viewBox="[^"]+"/,
+          'viewBox="' +
+            [first.x, first.y, first.width, first.height].join(" ") +
+            '"',
+        )
+        .replace(/width="[^"]+" height="[^"]+"/, 'width="720" height="480"');
+    const different = await p.evaluate(
+      async ({ svg, reference }) => {
+        async function pixels(url: string) {
+          const im = new Image();
+          im.src = url;
+          await im.decode();
+          const cv = document.createElement("canvas");
+          cv.width = 720;
+          cv.height = 480;
+          const ctx = cv.getContext("2d")!;
+          ctx.drawImage(im, 0, 0, 720, 480);
+          return ctx.getImageData(0, 0, 720, 480).data;
+        }
+        const url = URL.createObjectURL(
+          new Blob([svg], { type: "image/svg+xml" }),
+        );
+        try {
+          const a = await pixels(url),
+            b = await pixels("data:image/png;base64," + reference);
+          let mismatch = 0,
+            painted = 0;
+          for (let i = 0; i < a.length; i += 4) {
+            if (b[i + 3] > 200) painted++;
+            if (
+              Math.abs(a[i + 3] - b[i + 3]) > 30 ||
+              (b[i + 3] > 200 && Math.abs(a[i + 1] - b[i + 1]) > 15)
+            )
+              mismatch++;
+          }
+          return { mismatch, painted };
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      },
+      {
+        svg,
+        reference: (await readFile(join(dir, "reference.png"))).toString(
+          "base64",
+        ),
+      },
+    );
+    expect(different.painted).toBeGreaterThan(5000);
+    expect(different.mismatch / different.painted).toBeLessThan(0.04);
+    await p.getByRole("button", { name: "Документы", exact: true }).click();
+    await p.getByRole("button", { name: /forest/ }).click();
+    await expect(
+      p.getByRole("button", { name: "Выбрать слой Кривая", exact: true }),
+    ).toBeVisible();
+    await p
+      .getByRole("button", { name: "Выбрать слой Кривая", exact: true })
+      .click();
+    const curve = p.locator(
+      '.surface [data-object="' + by("Кривая").id + '"] path',
+    );
+    await p.getByLabel("Цвет рисования", { exact: true }).fill("#da3903");
+    await expect(curve).toHaveCSS("fill", "rgb(218, 57, 3)");
+    await p.getByTitle("Отменить (Ctrl Z)").click();
+    await expect(curve).toHaveCSS("fill", "rgb(24, 127, 63)");
+    const before = await p.locator(".surface [data-object]").count();
+    await p.getByRole("button", { name: "Поместить AI", exact: true }).click();
+    await expect
+      .poll(() => p.locator(".surface [data-object]").count(), {
+        timeout: 45000,
+      })
+      .toBeGreaterThan(before);
+    await p.getByTitle("Отменить (Ctrl Z)").click();
+    await expect(p.locator(".surface [data-object]")).toHaveCount(before);
+    const ai = await p.evaluate(
+      async (doc) =>
+        Array.from(
+          (
+            await window.gigma!.illustrator!({ mode: "export", document: doc })
+          ).slice(0, 5),
+        ),
+      d,
+    );
+    expect(String.fromCharCode(...ai)).toBe("%PDF-");
+    expect(await readFile(path)).toEqual(original);
+    const damaged = join(dir, "broken.ai");
+    await writeFile(damaged, "invalid document");
+    await app.evaluate(({ dialog }, file) => {
+      dialog.showOpenDialog = async () => ({
+        canceled: false,
+        filePaths: [file],
+      });
+    }, damaged);
+    await p.getByRole("button", { name: "Поместить AI", exact: true }).click();
+    await expect(p.getByRole("alert")).toContainText(
+      "Файл не содержит документ Illustrator",
+    );
+    await expect(p.getByLabel("Название документа")).toHaveValue("forest");
+    await expect(p.locator(".surface [data-object]")).toHaveCount(before);
   } finally {
     await app.close();
   }

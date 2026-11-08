@@ -1,5 +1,6 @@
 import { adjustmentKinds } from "./adjustments";
 import { z } from "zod";
+import { artworkSchema } from "./vector";
 
 export const kinds = [
   "frame",
@@ -12,6 +13,7 @@ export const kinds = [
   "image",
   "group",
   "polygon",
+  "vector",
 ] as const;
 const point = z.object({
   pressure: z.number().min(0).max(1).optional(),
@@ -70,6 +72,7 @@ export const nodeSchema = z.object({
   fontWeight: z.enum(["400", "500", "600", "700"]),
   textAlign: z.enum(["left", "center", "right"]),
   points: z.array(point).max(20000),
+  artwork: artworkSchema.optional(),
   image: z
     .string()
     .max(15e6)
@@ -128,17 +131,19 @@ export type Summary = {
 };
 export type LoadResult = { document: DesignDocument; recovered: boolean };
 export type SaveResult = { revision: number; updatedAt: string };
+export type IllustratorArtwork = { name: string; svg: string; layers: string };
 export interface StorageAPI {
   list(): Promise<Summary[]>;
   load(id: string): Promise<LoadResult>;
   save(doc: DesignDocument, expectedRevision: number): Promise<SaveResult>;
   config(): Promise<{ folder: string; desktop: boolean }>;
   openFolder(): Promise<void>;
-  illustrator?(
-    payload:
-      | { mode: "import"; bytes: Uint8Array }
-      | { mode: "export"; document: DesignDocument; selection?: string[] },
-  ): Promise<Uint8Array>;
+  openIllustrator?(): Promise<IllustratorArtwork | null>;
+  illustrator?(payload: {
+    mode: "export";
+    document: DesignDocument;
+    selection?: string[];
+  }): Promise<Uint8Array>;
   onBeforeClose?(callback: () => Promise<void>): () => void;
 }
 export function validateDocument(value: unknown): DesignDocument {
@@ -168,6 +173,8 @@ export function validateDocument(value: unknown): DesignDocument {
     for (const node of page.nodes) {
       if (allIds.has(node.id))
         throw new Error("Идентификатор объекта повторяется.");
+      if (node.kind === "vector" && !node.artwork)
+        throw Error("Отсутствует векторная графика.");
       allIds.add(node.id);
       points += node.points.length;
       if (node.linkTo && !frames.has(node.linkTo))
@@ -226,6 +233,7 @@ const names: Record<Kind, string> = {
   image: "Изображение",
   group: "Группа",
   polygon: "Многоугольник",
+  vector: "Вектор",
 };
 export function newNode(
   kind: Kind,

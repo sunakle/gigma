@@ -58,6 +58,7 @@ const icons = {
   image: Image,
   group: Group,
   polygon: Diamond,
+  vector: Diamond,
 };
 export function Field({
   label,
@@ -303,6 +304,7 @@ export function LayersPanel({ page }: { page: DesignPage }) {
             text: "Текст",
             image: "Изображения",
             path: "Кисть",
+            vector: "Векторная графика",
             rect: "Прямоугольники",
             ellipse: "Эллипсы",
             polygon: "Многоугольники",
@@ -615,7 +617,10 @@ export function Inspector({
               </select>
             </section>
           )}
-          {!["line", "arrow", "path", "image", "group"].includes(n.kind) && (
+          {(n.artwork?.editablePaint ||
+            !["line", "arrow", "path", "image", "vector", "group"].includes(
+              n.kind,
+            )) && (
             <section>
               <h3>Заливка</h3>
               {color("fill", "Заливка")}
@@ -631,7 +636,8 @@ export function Inspector({
               )}
             </section>
           )}
-          {!["text", "image", "group"].includes(n.kind) && (
+          {(n.artwork?.editablePaint ||
+            !["text", "image", "vector", "group"].includes(n.kind)) && (
             <section>
               <h3>Обводка</h3>
               {color("stroke", "Обводка")}

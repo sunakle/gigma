@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   Menu,
   protocol,
@@ -10,7 +11,7 @@ import {
 import { join, resolve, extname, sep } from "node:path";
 import { mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { convertIllustrator } from "./illustrator";
+import { convertIllustrator, openIllustratorFile } from "./illustrator";
 import { DocumentStore } from "./document-store";
 
 protocol.registerSchemesAsPrivileged([
@@ -106,6 +107,17 @@ else {
       )
         throw new Error("Недопустимый источник запроса.");
     };
+    ipcMain.handle("gigma:open-illustrator", async (event) => {
+      trusted(event);
+      const pick = await dialog.showOpenDialog(win!, {
+        title: "Открыть документ Illustrator",
+        properties: ["openFile"],
+        filters: [{ name: "Adobe Illustrator", extensions: ["ai"] }],
+      });
+      return pick.canceled || !pick.filePaths.length
+        ? null
+        : openIllustratorFile(pick.filePaths[0]);
+    });
     ipcMain.handle("gigma:illustrator", (event, payload) => {
       trusted(event);
       return convertIllustrator(payload);

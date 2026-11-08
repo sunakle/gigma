@@ -27,12 +27,16 @@ export function Home({
   open,
   load,
   importFile,
+  openAI,
+  busy,
   report,
 }: {
   settings: () => void;
   open: (doc: DesignDocument) => void;
   load: (id: string) => void;
   importFile: () => void;
+  openAI?: () => void;
+  busy: boolean;
   report: (e: unknown) => void;
 }) {
   const [docs, setDocs] = useState<Summary[]>([]),
@@ -88,9 +92,17 @@ export function Home({
               <small>РАБОЧЕЕ ПРОСТРАНСТВО</small>
               <h1>Мои документы</h1>
             </div>
-            <button className="secondary" onClick={importFile}>
-              <ArrowDownToLine /> Импорт .gigma
-            </button>
+            <div className="home-imports">
+              {openAI && (
+                <button className="secondary" onClick={openAI} disabled={busy}>
+                  <FolderOpen />
+                  {busy ? "Открываю AI…" : "Открыть AI со слоями"}
+                </button>
+              )}
+              <button className="secondary" onClick={importFile}>
+                <ArrowDownToLine /> Импорт .gigma
+              </button>
+            </div>
           </div>
           <div className="create-cards">
             <button
