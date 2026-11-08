@@ -46,6 +46,7 @@ import {
   moveNodes,
   resizeNodes,
   selectionBounds,
+  toggleObject,
 } from "./core/geometry";
 import { studio } from "./core/studio";
 const icons = {
@@ -223,9 +224,7 @@ export const LayersPanel = memo(function LayersPanel({
               return;
             studio.select(
               e.shiftKey
-                ? studio.selection.includes(n.id)
-                  ? studio.selection.filter((i) => i !== n.id)
-                  : [...studio.selection, n.id]
+                ? toggleObject(page.nodes, studio.selection, n.id)
                 : [n.id],
             );
           }}

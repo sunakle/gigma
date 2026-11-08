@@ -18,7 +18,7 @@ import {
   container,
   descendants,
   inherited,
-  intersects,
+  toggleObject,
   resizeNodes,
   roots,
   screenToWorld,
@@ -38,6 +38,7 @@ import {
   exportBounds,
   effectDefs,
 } from "./core/svg";
+import { marqueeObjects, objectAt } from "./core/canvas-selection";
 import { studio } from "./core/studio";
 
 export type Tool =
@@ -295,9 +296,7 @@ export function Canvas({
   function hit(
     e: ReactPointer<SVGSVGElement> | React.MouseEvent<SVGSVGElement>,
   ) {
-    const target =
-      document.elementFromPoint(e.clientX, e.clientY) ?? (e.target as Element);
-    const id = target.closest("[data-object]")?.getAttribute("data-object");
+    const id = objectAt(svg.current!, e.clientX, e.clientY);
     return page.nodes.find((n) => n.id === id);
   }
   function down(e: ReactPointer<SVGSVGElement>) {
@@ -378,20 +377,37 @@ export function Canvas({
         };
         return;
       }
-      let n = hit(e);
+      let n = targetNode;
       if (n && inherited(page.nodes, n, "locked")) n = undefined;
-      if (n && tool !== "direct" && !e.ctrlKey && !e.metaKey) {
+      if (
+        n?.kind === "frame" &&
+        !selected.includes(n.id) &&
+        tool === "select" &&
+        !e.ctrlKey &&
+        !e.metaKey
+      ) {
+        // Drag on the background to select children; a click still selects the frame.
+        base.id = n.id;
+        n = undefined;
+      }
+      if (
+        n &&
+        tool !== "direct" &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.shiftKey &&
+        !selected.includes(n.id)
+      ) {
         let parent = page.nodes.find((p) => p.id === n!.parentId);
         while (parent?.kind === "group" && !parent.artLayer) {
           n = parent;
+          if (selected.includes(n.id)) break;
           parent = page.nodes.find((p) => p.id === parent!.parentId);
         }
       }
       if (n) {
         const ids = e.shiftKey
-          ? selected.includes(n.id)
-            ? selected.filter((id) => id !== n.id)
-            : [...selected, n.id]
+          ? toggleObject(page.nodes, selected, n.id)
           : selected.includes(n.id)
             ? selected
             : [n.id];
@@ -653,21 +669,23 @@ export function Canvas({
           v,
         ),
         b = boxBetween(a.start, at);
-      const ids =
-        b.width + b.height > 4 / v.zoom
-          ? page.nodes
-              .filter(
-                (n) =>
-                  !inherited(page.nodes, n, "locked") &&
-                  !inherited(page.nodes, n, "hidden") &&
-                  intersects(b, bounds(n)) &&
-                  (n.kind !== "frame" ||
-                    (contains(b, { x: n.x, y: n.y }) &&
-                      contains(b, { x: n.x + n.width, y: n.y + n.height }))),
-              )
-              .map((n) => n.id)
-          : [];
-      studio.select(roots(page.nodes, [...new Set([...a.selected, ...ids])]));
+      if (e.type !== "pointercancel") {
+        const end = { x: e.clientX, y: e.clientY };
+        const dragged = Math.hypot(end.x - a.client.x, end.y - a.client.y) > 3;
+        const ids = dragged
+          ? marqueeObjects(
+              svg.current!,
+              page.nodes,
+              a.client,
+              end,
+              b,
+              tool === "direct" || e.ctrlKey || e.metaKey,
+            )
+          : a.id
+            ? [a.id]
+            : [];
+        studio.select(roots(page.nodes, [...new Set([...a.selected, ...ids])]));
+      }
       setMarquee(null);
     } else if (a.type === "move") {
       if (

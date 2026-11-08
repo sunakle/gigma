@@ -35,6 +35,27 @@ export function roots(nodes: DesignNode[], ids: string[]) {
     return true;
   });
 }
+// An explicit click on a layer/shape takes precedence over a previously selected ancestor.
+export function toggleObject(
+  nodes: DesignNode[],
+  selected: string[],
+  id: string,
+) {
+  if (selected.includes(id)) return selected.filter((s) => s !== id);
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  function ancestorOf(ancestor: string, child: string) {
+    let parent = byId.get(child)?.parentId;
+    while (parent) {
+      if (parent === ancestor) return true;
+      parent = byId.get(parent)?.parentId;
+    }
+    return false;
+  }
+  return [
+    ...selected.filter((s) => !ancestorOf(s, id) && !ancestorOf(id, s)),
+    id,
+  ];
+}
 export function inherited(
   nodes: DesignNode[],
   node: DesignNode,

@@ -674,3 +674,106 @@ test("Чёткие пиксели и перемещение группы на б
     await app.close();
   }
 });
+
+test("Рамка внутри слоя выбирает только задетые детали рисунка", async () => {
+  const app = await launch();
+  try {
+    const p = await app.firstWindow(),
+      d = newDocument("Проверка выделения"),
+      sheet = d.pages[0];
+    const make = (
+      kind: Parameters<typeof newNode>[0],
+      name: string,
+      x: number,
+      y: number,
+      w: number,
+      h: number,
+      parentId: string | null,
+    ) => {
+      const n = newNode(kind, x, y, w, h);
+      n.name = name;
+      n.parentId = parentId;
+      sheet.nodes.push(n);
+      return n;
+    };
+    const frame = make("frame", "Монтажная область", 0, 0, 330, 220, null);
+    const layer = make("group", "Слой Illustrator", 15, 15, 270, 145, frame.id);
+    layer.artLayer = true;
+    const group = make("group", "Группа с соседом", 30, 35, 210, 85, layer.id);
+    make("rect", "Шляпка", 30, 35, 22, 20, group.id);
+    make("ellipse", "Ножка", 60, 37, 18, 18, group.id);
+    make("rect", "Сосед", 210, 90, 30, 30, group.id);
+    make("ellipse", "Круг рядом", 84, 62, 40, 40, layer.id);
+    const locked = make("group", "Замок", 34, 38, 5, 5, layer.id);
+    locked.locked = true;
+    make("rect", "Недоступная деталь", 34, 38, 5, 5, locked.id);
+    make("rect", "Скрытая деталь", 42, 37, 8, 8, layer.id).hidden = true;
+    const transparent = make(
+      "image",
+      "Лист с отступом",
+      15,
+      15,
+      122,
+      130,
+      layer.id,
+    );
+    transparent.image = await p.evaluate(() => {
+      const c = document.createElement("canvas");
+      c.width = c.height = 16;
+      c.getContext("2d")!.fillRect(12, 12, 4, 4);
+      return c.toDataURL();
+    });
+    sheet.view = { x: 34, y: 38, zoom: 1.5 };
+    await p.evaluate((doc) => window.gigma!.save(doc, 0), d);
+    await p.reload();
+    await p
+      .getByRole("button", { name: "Проверка выделения", exact: false })
+      .click();
+    const stage = (await p.getByLabel("Холст").boundingBox())!;
+    const mouse = (x: number, y: number) =>
+      p.mouse.move(stage.x + 34 + x * 1.5, stage.y + 38 + y * 1.5);
+    const drag = async (x: number, y: number, ex: number, ey: number) => {
+      await mouse(x, y);
+      await p.mouse.down();
+      await mouse(ex, ey);
+      await p.mouse.up();
+    };
+    const names = async () =>
+      (
+        await p.locator(".layer-row.chosen .layer-name").allTextContents()
+      ).sort();
+    await drag(22, 24, 88, 66);
+    await expect.poll(names).toEqual(["Ножка", "Шляпка"]);
+    await drag(46, 49, 56, 54);
+    await expect.poll(names).toEqual(["Ножка", "Шляпка"]);
+    await p.keyboard.press("Control+s");
+    await expect(
+      p.getByRole("status", { name: "Состояние сохранения" }),
+    ).toHaveText("Все изменения сохранены");
+    const saved = await p.evaluate(
+      async (id) => (await window.gigma!.load(id)).document.pages[0].nodes,
+      d.id,
+    );
+    for (const source of sheet.nodes.filter((n) => n.kind !== "group")) {
+      const chosen = ["Шляпка", "Ножка"].includes(source.name),
+        actual = saved.find((n) => n.id === source.id)!;
+      expect(actual.x).toBeCloseTo(source.x + (chosen ? 10 : 0));
+      expect(actual.y).toBeCloseTo(source.y + (chosen ? 5 : 0));
+    }
+    await p.keyboard.press("Control+z");
+    await drag(88, 66, 22, 24);
+    await expect.poll(names).toEqual(["Ножка", "Шляпка"]);
+    await p.keyboard.down("Shift");
+    await mouse(220, 100);
+    await p.mouse.down();
+    await p.mouse.up();
+    await p.keyboard.up("Shift");
+    await expect.poll(names).toEqual(["Ножка", "Сосед", "Шляпка"]);
+    await drag(191, 140, 180, 132);
+    await expect.poll(names).toEqual([]);
+    await drag(145, 150, 113, 120);
+    await expect.poll(names).toEqual(["Лист с отступом"]);
+  } finally {
+    await app.close();
+  }
+});
