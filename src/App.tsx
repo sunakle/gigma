@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -372,12 +373,15 @@ export default function App() {
         studio.selection = ungroupNodes(p, sel);
       });
   }
-  const frames =
-    doc?.pages.flatMap((p) =>
-      p.nodes
-        .filter((n) => n.kind === "frame" && !inherited(p.nodes, n, "hidden"))
-        .map((n) => ({ p, n })),
-    ) ?? [];
+  const frames = useMemo(
+    () =>
+      doc?.pages.flatMap((p) =>
+        p.nodes
+          .filter((n) => n.kind === "frame" && !inherited(p.nodes, n, "hidden"))
+          .map((n) => ({ p, n })),
+      ) ?? [],
+    [doc, studio.artworkVersion],
+  );
   const slide = frames.find((f) => f.n.id === preview);
   const slideIds = slide ? descendants(slide.p.nodes, [slide.n.id]) : null;
   function stepSlide(by: number) {
@@ -735,7 +739,12 @@ export default function App() {
             </div>
           </header>
           <div className="workspace">
-            <LayersPanel page={page} />
+            <LayersPanel
+              key={page.id}
+              page={page}
+              artworkVersion={studio.artworkVersion}
+              selection={sel}
+            />
             <Canvas
               key={page.id}
               page={page}

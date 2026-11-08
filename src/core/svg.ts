@@ -37,6 +37,14 @@ export function paintChannel(n: DesignNode): "fill" | "stroke" | null {
     ? "stroke"
     : "fill";
 }
+export function imageSampling(n: DesignNode) {
+  return (
+    n.sampling ?? (n.image.startsWith("data:image/png;") ? "pixelated" : "auto")
+  );
+}
+export function nodeTransform(n: DesignNode) {
+  return `translate(${n.x} ${n.y}) rotate(${n.rotation} ${n.width / 2} ${n.height / 2})`;
+}
 export function nodeSVG(n: DesignNode, preview = false): string {
   const channel = preview ? paintChannel(n) : null;
   const fill = channel === "fill" ? `var(--gigma-paint, ${n.fill})` : n.fill;
@@ -123,11 +131,18 @@ export function nodeSVG(n: DesignNode, preview = false): string {
     inner = `<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="${n.width}" height="${n.height}" viewBox="${box.join(" ")}" preserveAspectRatio="none" overflow="visible" ${paint}>${elements.map((e) => vectorXML(e, "ai-" + n.id + "-")).join("")}</svg>`;
   }
   if (n.kind === "image" && n.image)
-    inner = `<image href="${esc(n.image)}" width="${n.width}" height="${n.height}" preserveAspectRatio="none" opacity="${n.opacity}"/>`;
-  return `<g transform="translate(${n.x} ${n.y}) rotate(${n.rotation} ${n.width / 2} ${n.height / 2})">${inner}</g>`;
+    inner = `<image image-rendering="${imageSampling(n)}" href="${esc(n.image)}" width="${n.width}" height="${n.height}" preserveAspectRatio="none" opacity="${n.opacity}"/>`;
+  return `<g transform="${nodeTransform(n)}">${inner}</g>`;
 }
 export function pageMarkup(page: DesignPage, selection?: string[]) {
   const allowed = selection ? descendants(page.nodes, selection) : null;
+  const childrenByParent = new Map<string, DesignNode[]>();
+  for (const n of page.nodes)
+    if (n.parentId) {
+      let siblings = childrenByParent.get(n.parentId);
+      if (!siblings) childrenByParent.set(n.parentId, (siblings = []));
+      siblings.push(n);
+    }
   const draw = (n: DesignNode): string => {
     const id = "fx-" + n.id;
     return (
@@ -143,7 +158,7 @@ export function pageMarkup(page: DesignPage, selection?: string[]) {
   };
   const content = (n: DesignNode): string => {
     if (n.hidden) return "";
-    const children = page.nodes.filter((c) => c.parentId === n.id);
+    const children = childrenByParent.get(n.id) ?? [];
     if (n.kind === "group")
       return `<g opacity="${n.opacity}">${children.map(draw).join("")}</g>`;
     let result = nodeSVG(n.kind === "frame" ? { ...n, opacity: 1 } : n);

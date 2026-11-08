@@ -1,4 +1,6 @@
 import {
+  memo,
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -17,7 +19,6 @@ import {
   descendants,
   inherited,
   intersects,
-  moveNodes,
   resizeNodes,
   roots,
   screenToWorld,
@@ -30,7 +31,13 @@ import { InlineText } from "./InlineText";
 import { fitText } from "./core/text-layout";
 import { pressureFactor } from "./core/brush";
 import { removeNodes } from "./core/geometry";
-import { nodeSVG, exportBounds, effectDefs } from "./core/svg";
+import {
+  nodeSVG,
+  nodeTransform,
+  imageSampling,
+  exportBounds,
+  effectDefs,
+} from "./core/svg";
 import { studio } from "./core/studio";
 
 export type Tool =
@@ -47,6 +54,8 @@ type Gesture = {
   client: Point;
   view: DesignPage["view"];
   original: DesignNode[];
+  moving?: Element[];
+  delta?: Point;
   selected: string[];
   box?: Bounds;
   handle?: string;
@@ -67,7 +76,7 @@ export function zoomAt(page: DesignPage, value: number, at?: Point) {
   };
   const zoom = Math.min(32, Math.max(0.02, value)),
     ratio = zoom / page.view.zoom;
-  studio.view((p) => {
+  studio.camera((p) => {
     p.view = {
       x: center.x - (center.x - p.view.x) * ratio,
       y: center.y - (center.y - p.view.y) * ratio,
@@ -83,7 +92,7 @@ export function fitPage(page: DesignPage) {
       0.02,
       Math.min(2, (host.width - 96) / b.width, (host.height - 96) / b.height),
     );
-  studio.view((p) => {
+  studio.camera((p) => {
     p.view = {
       zoom,
       x: (host.width - b.width * zoom) / 2 - b.x * zoom,
@@ -91,7 +100,7 @@ export function fitPage(page: DesignPage) {
     };
   });
 }
-export function Scene({
+export const Scene = memo(function Scene({
   nodes,
   activate,
   prefix = "canvas",
@@ -100,6 +109,7 @@ export function Scene({
   selection,
 }: {
   nodes: DesignNode[];
+  artworkVersion?: number;
   activate?: (id: string) => void;
   prefix?: string;
   editingId?: string | null;
@@ -160,7 +170,18 @@ export function Scene({
         {n.id === editingId && onCommitText && (
           <InlineText node={n} commit={(value) => onCommitText(n, value)} />
         )}
-        {n.id !== editingId && n.kind !== "group" && (
+        {n.kind === "image" && n.image && (
+          <image
+            transform={nodeTransform(n)}
+            href={n.image}
+            width={n.width}
+            height={n.height}
+            preserveAspectRatio="none"
+            opacity={n.opacity}
+            imageRendering={imageSampling(n)}
+          />
+        )}
+        {n.id !== editingId && n.kind !== "group" && n.kind !== "image" && (
           <g
             dangerouslySetInnerHTML={{
               __html: nodeSVG(
@@ -196,7 +217,7 @@ export function Scene({
     );
   }
   return <>{children.get(null)?.map(draw)}</>;
-}
+});
 function updatePath(n: DesignNode, points: DesignNode["points"]) {
   const xs = points.map((p) => p.x),
     ys = points.map((p) => p.y);
@@ -236,6 +257,15 @@ export function Canvas({
   const [marquee, setMarquee] = useState<Bounds | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
 
+  const commitText = useCallback((node: DesignNode, value: string) => {
+    if (value !== node.text)
+      studio.mutate("Изменить текст", () => {
+        node.text = value;
+        node.textLayout ??= "auto";
+        fitText(node);
+      });
+    setEditing(null);
+  }, []);
   const v = page.view,
     selected = studio.selection,
     box = selectionBounds(page.nodes, selected);
@@ -254,7 +284,7 @@ export function Canvas({
           y: event.clientY - r.top,
         });
       } else
-        studio.view((p) => {
+        studio.camera((p) => {
           p.view.x -= event.shiftKey ? event.deltaY : event.deltaX;
           p.view.y -= event.shiftKey ? 0 : event.deltaY;
         });
@@ -336,12 +366,15 @@ export function Canvas({
       const handle = (e.target as Element).getAttribute("data-handle");
       if (handle && box) {
         studio.begin("Изменить размер");
+        const affected = descendants(page.nodes, selected);
         g.current = {
           ...base,
           type: "resize",
           handle,
           box,
-          original: structuredClone(page.nodes),
+          original: page.nodes
+            .filter((n) => affected.has(n.id))
+            .map((n) => ({ ...n })),
         };
         return;
       }
@@ -364,11 +397,23 @@ export function Canvas({
             : [n.id];
         studio.select(ids);
         if (!ids.length) return;
-        studio.begin("Переместить");
+        const rootIds = roots(page.nodes, ids);
+        const moving: Element[] = [];
+        for (const id of rootIds) {
+          const object = svg.current!.querySelector(
+            '[data-object="' + id + '"]',
+          );
+          const label = svg.current!.querySelector(
+            '[data-frame-label="' + id + '"]',
+          );
+          if (object) moving.push(object);
+          if (label) moving.push(label);
+        }
         g.current = {
           ...base,
           type: "move",
-          original: structuredClone(page.nodes),
+          moving,
+          box: selectionBounds(page.nodes, ids) ?? undefined,
           selected: ids,
         };
       } else {
@@ -441,6 +486,7 @@ export function Canvas({
     if (n && !container(n) && !inherited(page.nodes, n, "locked")) {
       removeNodes(studio.document!, page, [n.id]);
       studio.select([]);
+      studio.emit();
     }
   }
   function move(e: ReactPointer<SVGSVGElement>) {
@@ -464,76 +510,70 @@ export function Canvas({
     let dx = at.x - a.start.x,
       dy = at.y - a.start.y;
     if (a.type === "pan") {
-      page.view.x = a.view.x + client.x - a.client.x;
-      page.view.y = a.view.y + client.y - a.client.y;
-      studio.emit();
+      studio.camera((p) => {
+        p.view.x = a.view.x + client.x - a.client.x;
+        p.view.y = a.view.y + client.y - a.client.y;
+      });
       return;
     }
     if (a.type === "marquee") {
       setMarquee(boxBetween(a.start, at));
       return;
     }
-    if (a.type === "move" || a.type === "resize") {
-      page.nodes = structuredClone(a.original);
-      if (a.type === "move") {
-        if (e.shiftKey) {
-          if (Math.abs(dx) > Math.abs(dy)) dy = 0;
-          else dx = 0;
-        }
-        if (prefs.snap) {
-          const b = selectionBounds(a.original, a.selected);
-          if (b) {
-            dx = Math.round((b.x + dx) / prefs.gridSize) * prefs.gridSize - b.x;
-            dy = Math.round((b.y + dy) / prefs.gridSize) * prefs.gridSize - b.y;
-          }
-        }
-        moveNodes(page.nodes, a.selected, dx, dy);
-      } else {
-        const b = a.box!,
-          h = a.handle!;
-        const left = h.includes("w")
-          ? Math.min(b.x + dx, b.x + b.width - 1)
-          : b.x;
-        const top = h.includes("n")
-          ? Math.min(b.y + dy, b.y + b.height - 1)
-          : b.y;
-        const right = h.includes("e")
-          ? Math.max(b.x + b.width + dx, b.x + 1)
-          : b.x + b.width;
-        const bottom = h.includes("s")
-          ? Math.max(b.y + b.height + dy, b.y + 1)
-          : b.y + b.height;
-        const target = {
-          x: left,
-          y: top,
-          width: right - left,
-          height: bottom - top,
-        };
-        const single =
-          a.selected.length === 1
-            ? page.nodes.find((n) => n.id === a.selected[0])
-            : null;
-        if (single?.kind === "text" && h.length === 2) {
-          const sx = target.width / b.width,
-            sy = target.height / b.height;
-          const ratio = Math.max(
-            6 / single.fontSize,
-            Math.min(
-              1000 / single.fontSize,
-              Math.abs(sx - 1) > Math.abs(sy - 1) ? sx : sy,
-            ),
-          );
-          target.width = b.width * ratio;
-          target.height = b.height * ratio;
-          target.x = h.includes("w") ? b.x + b.width - target.width : b.x;
-          target.y = h.includes("n") ? b.y + b.height - target.height : b.y;
-        }
-        if (single?.kind === "frame") Object.assign(single, target);
-        else {
-          if (single?.kind === "text" && (h === "e" || h === "w"))
-            single.textLayout = "wrap";
-          resizeNodes(page.nodes, a.selected, b, target);
-        }
+    if (a.type === "move") {
+      previewTranslation(a, dx, dy, e.shiftKey);
+      return;
+    }
+    if (a.type === "resize") {
+      const originals = new Map(a.original.map((n) => [n.id, n]));
+      for (const n of page.nodes) {
+        const original = originals.get(n.id);
+        if (original) Object.assign(n, original);
+      }
+      const b = a.box!,
+        h = a.handle!;
+      const left = h.includes("w")
+        ? Math.min(b.x + dx, b.x + b.width - 1)
+        : b.x;
+      const top = h.includes("n")
+        ? Math.min(b.y + dy, b.y + b.height - 1)
+        : b.y;
+      const right = h.includes("e")
+        ? Math.max(b.x + b.width + dx, b.x + 1)
+        : b.x + b.width;
+      const bottom = h.includes("s")
+        ? Math.max(b.y + b.height + dy, b.y + 1)
+        : b.y + b.height;
+      const target = {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+      };
+      const single =
+        a.selected.length === 1
+          ? page.nodes.find((n) => n.id === a.selected[0])
+          : null;
+      if (single?.kind === "text" && h.length === 2) {
+        const sx = target.width / b.width,
+          sy = target.height / b.height;
+        const ratio = Math.max(
+          6 / single.fontSize,
+          Math.min(
+            1000 / single.fontSize,
+            Math.abs(sx - 1) > Math.abs(sy - 1) ? sx : sy,
+          ),
+        );
+        target.width = b.width * ratio;
+        target.height = b.height * ratio;
+        target.x = h.includes("w") ? b.x + b.width - target.width : b.x;
+        target.y = h.includes("n") ? b.y + b.height - target.height : b.y;
+      }
+      if (single?.kind === "frame") Object.assign(single, target);
+      else {
+        if (single?.kind === "text" && (h === "e" || h === "w"))
+          single.textLayout = "wrap";
+        resizeNodes(page.nodes, a.selected, b, target);
       }
     } else {
       const n = page.nodes.find((n) => n.id === a.id)!;
@@ -572,6 +612,30 @@ export function Canvas({
     }
     studio.emit();
   }
+  function previewTranslation(
+    a: Gesture,
+    dx: number,
+    dy: number,
+    shift: boolean,
+  ) {
+    if (shift) {
+      if (Math.abs(dx) > Math.abs(dy)) dy = 0;
+      else dx = 0;
+    }
+    if (prefs.snap && a.box) {
+      dx =
+        Math.round((a.box.x + dx) / prefs.gridSize) * prefs.gridSize - a.box.x;
+      dy =
+        Math.round((a.box.y + dy) / prefs.gridSize) * prefs.gridSize - a.box.y;
+    }
+    a.delta = { x: dx, y: dy };
+    const transform = "translate(" + dx + " " + dy + ")";
+    for (const element of a.moving!)
+      element.setAttribute("transform", transform);
+    svg.current
+      ?.querySelector(".selection")
+      ?.setAttribute("transform", transform);
+  }
   function up(e: ReactPointer<SVGSVGElement>) {
     const a = g.current;
     if (!a || a.pointerId !== e.pointerId) return;
@@ -605,9 +669,29 @@ export function Canvas({
           : [];
       studio.select(roots(page.nodes, [...new Set([...a.selected, ...ids])]));
       setMarquee(null);
+    } else if (a.type === "move") {
+      if (
+        e.type !== "pointercancel" &&
+        (a.delta || e.clientX !== a.client.x || e.clientY !== a.client.y)
+      )
+        previewTranslation(
+          a,
+          (e.clientX - a.client.x) / a.view.zoom,
+          (e.clientY - a.client.y) / a.view.zoom,
+          e.shiftKey,
+        );
+      for (const element of a.moving!) element.removeAttribute("transform");
+      svg.current?.querySelector(".selection")?.removeAttribute("transform");
+      if (a.delta && e.type !== "pointercancel")
+        studio.translate(page, a.selected, a.delta.x, a.delta.y);
     } else if (a.type === "pan") {
-      studio.changed();
-      studio.emit();
+      const x = a.view.x + e.clientX - a.client.x,
+        y = a.view.y + e.clientY - a.client.y;
+      if (e.type !== "pointercancel" && (v.x !== x || v.y !== y))
+        studio.camera((p) => {
+          p.view.x = x;
+          p.view.y = y;
+        });
     } else {
       if (a.type === "draw") {
         const n = page.nodes.find((n) => n.id === a.id)!;
@@ -689,6 +773,7 @@ export function Canvas({
             .map((n) => (
               <text
                 key={n.id}
+                data-frame-label={n.id}
                 x={n.x}
                 y={n.y - 8 / v.zoom}
                 fontSize={11 / v.zoom}
@@ -702,15 +787,8 @@ export function Canvas({
             nodes={page.nodes}
             editingId={editing}
             selection={selected}
-            onCommitText={(node, value) => {
-              if (value !== node.text)
-                studio.mutate("Изменить текст", () => {
-                  node.text = value;
-                  node.textLayout ??= "auto";
-                  fitText(node);
-                });
-              setEditing(null);
-            }}
+            artworkVersion={studio.artworkVersion}
+            onCommitText={commitText}
           />
           {box && !editing && (
             <g className="selection">

@@ -9,6 +9,7 @@ import {
 } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { newDocument, newNode } from "../../shared/model";
 import { exportSVG } from "../../src/core/svg";
 import { resolve, join } from "node:path";
 import { createRequire } from "node:module";
@@ -512,6 +513,163 @@ test("Активный цвет, живой спектр и одна отмен�
       return document.pages[0].nodes.map((n) => n.fill);
     });
     expect(saved.slice(-4)).toEqual(Array(4).fill("#184a62"));
+  } finally {
+    await app.close();
+  }
+});
+
+test("Чёткие пиксели и перемещение группы на большой странице", async () => {
+  const app = await launch();
+  try {
+    const p = await app.firstWindow();
+    const doc = newDocument("Пиксели"),
+      sheet = doc.pages[0];
+    const group = newNode("group", 0, 0, 64, 64),
+      sprite = newNode("image", 0, 0, 64, 64);
+    sprite.parentId = group.id;
+    sprite.image = await p.evaluate(() => {
+      const c = document.createElement("canvas");
+      c.width = c.height = 2;
+      const ctx = c.getContext("2d")!;
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, 2, 2);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(1, 0, 1, 2);
+      return c.toDataURL();
+    });
+    for (let i = 0; i < 500; i++) {
+      const n = newNode("rect", 3000 + i, 3000, 4, 4);
+      n.name = "Дальний " + i;
+      sheet.nodes.push(n);
+    }
+    sheet.nodes.push(group, sprite);
+    sheet.view = { x: 100, y: 90, zoom: 1.125 };
+    await p.evaluate((d) => window.gigma!.save(d, 0), doc);
+    await p.reload();
+    await p.getByRole("button", { name: /Пиксели/ }).click();
+    const image = p.locator(`.surface [data-object="${sprite.id}"] image`);
+    await expect(image).toHaveCSS("image-rendering", "pixelated");
+    expect(await p.locator(".layer-row").count()).toBeLessThan(80);
+    const rows = p.locator(".layers");
+    await rows.evaluate((e) => {
+      e.scrollTop = e.scrollHeight;
+    });
+    await expect(
+      rows.getByRole("button", { name: "Выбрать слой Дальний 0", exact: true }),
+    ).toBeVisible();
+    const readColors = async (png: Buffer) =>
+      p.evaluate(
+        async (uri) => {
+          const im = new Image();
+          im.src = uri;
+          await im.decode();
+          const c = document.createElement("canvas");
+          c.width = im.width;
+          c.height = im.height;
+          const ctx = c.getContext("2d")!;
+          ctx.drawImage(im, 0, 0);
+          const data = ctx.getImageData(
+            0,
+            Math.floor(c.height / 2),
+            c.width,
+            1,
+          ).data;
+          return [...new Set(Array.from(data).filter((_, i) => i % 4 === 0))];
+        },
+        "data:image/png;base64," + png.toString("base64"),
+      );
+    const b = (await image.boundingBox())!,
+      x = b.x + 16,
+      y = b.y + 24;
+    // A hidden Electron window may first return the previous compositor frame.
+    await expect
+      .poll(
+        async () =>
+          readColors(
+            Buffer.from(
+              await app.evaluate(
+                async ({ BrowserWindow }, rect) =>
+                  (
+                    await BrowserWindow.getAllWindows()[0].webContents.capturePage(
+                      rect,
+                    )
+                  )
+                    .toPNG()
+                    .toString("base64"),
+                {
+                  x: Math.ceil(b.x) + 2,
+                  y: Math.floor(b.y) + 5,
+                  width: Math.floor(b.width) - 4,
+                  height: 2,
+                },
+              ),
+              "base64",
+            ),
+          ),
+        { timeout: 12000 },
+      )
+      .toEqual([0, 255]);
+    await p.mouse.move(x, y);
+    await p.mouse.down();
+    await p.mouse.move(x + 45, y + 18, { steps: 5 });
+    expect((await image.boundingBox())!.x - b.x).toBeCloseTo(45);
+    await p.mouse.up();
+    const save = async () => {
+      await p.keyboard.press("Control+s");
+      await expect(
+        p.getByRole("status", { name: "Состояние сохранения" }),
+      ).toHaveText("Все изменения сохранены");
+      return p.evaluate(
+        async (id) => (await window.gigma!.load(id)).document.pages[0],
+        doc.id,
+      );
+    };
+    let saved = await save();
+    for (const id of [group.id, sprite.id])
+      expect(saved.nodes.find((n) => n.id === id)).toMatchObject({
+        x: 40,
+        y: 16,
+      });
+    await p.keyboard.press("Control+z");
+    expect((await image.boundingBox())!.x).toBeCloseTo(b.x);
+    await p.keyboard.press("Control+Shift+z");
+    expect((await image.boundingBox())!.x).toBeCloseTo(b.x + 45);
+    await p.mouse.move(x + 45, y + 18);
+    await p.mouse.down({ button: "middle" });
+    await p.mouse.move(x + 75, y + 36, { steps: 4 });
+    await p.mouse.up({ button: "middle" });
+    saved = await save();
+    expect(saved.view).toEqual({ x: 130, y: 108, zoom: 1.125 });
+    await p.keyboard.press("d");
+    await image.click({ position: { x: 12, y: 12 } });
+    await p.getByLabel("Отображение изображения").selectOption("auto");
+    await expect(image).toHaveCSS("image-rendering", "auto");
+    await p.getByTitle("Отменить (Ctrl Z)").click();
+    await expect(image).toHaveCSS("image-rendering", "pixelated");
+    await image.click({ position: { x: 12, y: 12 } });
+    await p.getByRole("button", { name: "Экспорт", exact: true }).click();
+    await p.getByLabel("Формат экспорта").selectOption("png");
+    await p.getByLabel("Область").selectOption("selection");
+    await p
+      .getByRole("dialog")
+      .getByLabel(/Масштаб/)
+      .selectOption("3");
+    const pngPath = resolve("test-results", "sprite-" + doc.id + ".png");
+    await app.evaluate(({ session }, path) => {
+      session.defaultSession.once("will-download", (_e, item) =>
+        item.setSavePath(path),
+      );
+    }, pngPath);
+    await p.getByRole("button", { name: "Скачать файл" }).click();
+    await expect
+      .poll(
+        async () =>
+          (await readFile(pngPath).catch(() => Buffer.alloc(0))).length,
+      )
+      .toBeGreaterThan(0);
+    const exported = await readFile(pngPath);
+    expect(exported.readUInt32BE(16)).toBe(192);
+    expect(await readColors(exported)).toEqual([0, 255]);
   } finally {
     await app.close();
   }

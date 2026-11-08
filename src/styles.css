@@ -487,6 +487,8 @@ button.primary,
   min-width: 0;
 }
 .left {
+  display: flex;
+  flex-direction: column;
   border-right: 1px solid #d8d8dc;
 }
 .right {
@@ -527,6 +529,9 @@ button.primary,
   border-top: 1px solid #e7e7e9;
 }
 .pages {
+  max-height: 32%;
+  overflow-y: auto;
+  flex-shrink: 0;
   padding: 0 8px 11px;
 }
 .pages button {
@@ -545,6 +550,10 @@ button.primary,
   background: #f0eff5;
 }
 .layers {
+  flex: 1;
+  min-height: 60px;
+  overflow: auto;
+  overflow-anchor: none;
   padding-bottom: 16px;
 }
 .layers > .muted {

@@ -31,6 +31,7 @@ export const nodeSchema = z.object({
   width: z.number().min(1).max(100000),
   height: z.number().min(1).max(100000),
   artLayer: z.boolean().optional(),
+  sampling: z.enum(["pixelated", "auto"]).optional(),
   sides: z.number().int().min(3).max(32).optional(),
   fillOpacity: z.number().min(0).max(1).optional(),
   blend: z

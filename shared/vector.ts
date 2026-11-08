@@ -52,6 +52,12 @@ export const artworkSchema = z.object({
 });
 export type Artwork = z.infer<typeof artworkSchema>;
 export function vectorXML(item: VectorElement, prefix: string): string {
+  const defaultSampling =
+    item.tag === "image" &&
+    item.attrs.href?.startsWith("data:image/png;") &&
+    !item.attrs["image-rendering"]
+      ? ' image-rendering="pixelated"'
+      : "";
   const attrs = Object.entries(item.attrs)
     .map(([k, raw]) => {
       let v = raw;
@@ -74,6 +80,7 @@ export function vectorXML(item: VectorElement, prefix: string): string {
   return (
     "<" +
     item.tag +
+    defaultSampling +
     attrs +
     ">" +
     item.children.map((c) => vectorXML(c, prefix)).join("") +

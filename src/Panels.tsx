@@ -1,7 +1,8 @@
 import { ColorPanel, Adjustments, LayerControls } from "./ArtPanels";
 import { BrushPanel } from "./Settings";
+import { imageSampling } from "./core/svg";
 import { fitText } from "./core/text-layout";
-import { useState } from "react";
+import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   AlignHorizontalJustifyCenter,
   AlignHorizontalJustifyEnd,
@@ -107,7 +108,15 @@ export function Field({
     </label>
   );
 }
-export function LayersPanel({ page }: { page: DesignPage }) {
+export const LayersPanel = memo(function LayersPanel({
+  page,
+  artworkVersion,
+  selection,
+}: {
+  page: DesignPage;
+  artworkVersion: number;
+  selection: string[];
+}) {
   const [fold, setFold] = useState(new Set<string>()),
     doc = studio.document!;
   function toggle(id: string) {
@@ -116,6 +125,57 @@ export function LayersPanel({ page }: { page: DesignPage }) {
     setFold(s);
   }
   const [filter, setFilter] = useState("all");
+  const list = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewport, setViewport] = useState(600);
+  useLayoutEffect(() => {
+    const el = list.current!;
+    const measure = () => setViewport(el.clientHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  const rows = useMemo(() => {
+    const children = new Map<string | null, DesignNode[]>();
+    for (const n of page.nodes) {
+      let peers = children.get(n.parentId);
+      if (!peers) children.set(n.parentId, (peers = []));
+      peers.push(n);
+    }
+    const ordered: {
+      n: DesignNode;
+      depth: number;
+      has: boolean;
+      closed: boolean;
+    }[] = [];
+    function visit(id: string | null, depth: number) {
+      const peers = children.get(id);
+      if (!peers) return;
+      for (let i = peers.length - 1; i >= 0; i--) {
+        const n = peers[i];
+        if (filter !== "all" && n.kind !== filter && !container(n)) continue;
+        const has = children.has(n.id),
+          closed = fold.has(n.id);
+        ordered.push({ n, depth, has, closed });
+        if (has && !closed) visit(n.id, depth + 1);
+      }
+    }
+    visit(null, 0);
+    return ordered;
+  }, [page, artworkVersion, filter, fold, page.nodes.length]);
+  const rowHeight = 29;
+  const start = Math.max(
+    0,
+    Math.floor(
+      Math.min(scrollTop, Math.max(0, rows.length * rowHeight - viewport)) /
+        rowHeight,
+    ) - 6,
+  );
+  const end = Math.min(
+    rows.length,
+    start + Math.ceil(viewport / rowHeight) + 13,
+  );
   function order(dir: number) {
     const id = studio.selection[0],
       index = page.nodes.findIndex((n) => n.id === id);
@@ -130,89 +190,79 @@ export function LayersPanel({ page }: { page: DesignPage }) {
         [page.nodes[index], page.nodes[j]] = [page.nodes[j], page.nodes[index]];
       });
   }
-  function rows(id: string | null, depth: number): React.ReactNode {
-    return page.nodes
-      .filter((n) => n.parentId === id)
-      .reverse()
-      .map((n) => {
-        if (filter !== "all" && n.kind !== filter && !container(n)) return null;
-        const Icon = icons[n.kind],
-          has = page.nodes.some((c) => c.parentId === n.id),
-          closed = fold.has(n.id);
-        return (
-          <div key={n.id}>
-            <div
-              className={
-                "layer-row " +
-                (studio.selection.includes(n.id) ? "chosen " : "") +
-                (n.hidden ? "dim" : "")
-              }
-              style={{ paddingLeft: 7 + depth * 12 }}
-            >
-              {has ? (
-                <button
-                  title={closed ? "Развернуть" : "Свернуть"}
-                  onClick={() => toggle(n.id)}
-                >
-                  {closed ? <ChevronRight /> : <ChevronDown />}
-                </button>
-              ) : (
-                <i />
-              )}
-              <button
-                className="layer-name"
-                aria-label={"Выбрать слой " + n.name}
-                onClick={(e) => {
-                  if (
-                    inherited(page.nodes, n, "locked") ||
-                    inherited(page.nodes, n, "hidden")
-                  )
-                    return;
-                  studio.select(
-                    e.shiftKey
-                      ? studio.selection.includes(n.id)
-                        ? studio.selection.filter((i) => i !== n.id)
-                        : [...studio.selection, n.id]
-                      : [n.id],
-                  );
-                }}
-              >
-                {n.kind === "image" ? (
-                  <img className="layer-thumb" alt="" src={n.image} />
-                ) : (
-                  <Icon />
-                )}
-                {n.name}
-              </button>
-              <button
-                title={n.locked ? "Разблокировать" : "Заблокировать"}
-                className={n.locked ? "" : "hover-control"}
-                onClick={() => {
-                  studio.mutate("Блокировка", () => {
-                    n.locked = !n.locked;
-                  });
-                  studio.select([]);
-                }}
-              >
-                {n.locked ? <LockKeyhole /> : <UnlockKeyhole />}
-              </button>
-              <button
-                title={n.hidden ? "Показать" : "Скрыть"}
-                className={n.hidden ? "" : "hover-control"}
-                onClick={() => {
-                  studio.mutate("Видимость", () => {
-                    n.hidden = !n.hidden;
-                  });
-                  studio.select([]);
-                }}
-              >
-                {n.hidden ? <EyeOff /> : <Eye />}
-              </button>
-            </div>
-            {has && !closed && rows(n.id, depth + 1)}
-          </div>
-        );
-      });
+  function row({ n, depth, has, closed }: (typeof rows)[number]) {
+    const Icon = icons[n.kind];
+    return (
+      <div
+        key={n.id}
+        className={
+          "layer-row " +
+          (selection.includes(n.id) ? "chosen " : "") +
+          (n.hidden ? "dim" : "")
+        }
+        style={{ paddingLeft: 7 + depth * 12 }}
+      >
+        {has ? (
+          <button
+            title={closed ? "Развернуть" : "Свернуть"}
+            onClick={() => toggle(n.id)}
+          >
+            {closed ? <ChevronRight /> : <ChevronDown />}
+          </button>
+        ) : (
+          <i />
+        )}
+        <button
+          className="layer-name"
+          aria-label={"Выбрать слой " + n.name}
+          onClick={(e) => {
+            if (
+              inherited(page.nodes, n, "locked") ||
+              inherited(page.nodes, n, "hidden")
+            )
+              return;
+            studio.select(
+              e.shiftKey
+                ? studio.selection.includes(n.id)
+                  ? studio.selection.filter((i) => i !== n.id)
+                  : [...studio.selection, n.id]
+                : [n.id],
+            );
+          }}
+        >
+          {n.kind === "image" ? (
+            <img className="layer-thumb" alt="" src={n.image} />
+          ) : (
+            <Icon />
+          )}
+          {n.name}
+        </button>
+        <button
+          title={n.locked ? "Разблокировать" : "Заблокировать"}
+          className={n.locked ? "" : "hover-control"}
+          onClick={() => {
+            studio.mutate("Блокировка", () => {
+              n.locked = !n.locked;
+            });
+            studio.select([]);
+          }}
+        >
+          {n.locked ? <LockKeyhole /> : <UnlockKeyhole />}
+        </button>
+        <button
+          title={n.hidden ? "Показать" : "Скрыть"}
+          className={n.hidden ? "" : "hover-control"}
+          onClick={() => {
+            studio.mutate("Видимость", () => {
+              n.hidden = !n.hidden;
+            });
+            studio.select([]);
+          }}
+        >
+          {n.hidden ? <EyeOff /> : <Eye />}
+        </button>
+      </div>
+    );
   }
   return (
     <aside className="sidebar left">
@@ -322,15 +372,26 @@ export function LayersPanel({ page }: { page: DesignPage }) {
       <LayerControls
         nodes={page.nodes.filter((n) => studio.selection.includes(n.id))}
       />
-      <div className="layers">
-        {rows(null, 0)}
+      <div
+        className="layers"
+        ref={list}
+        onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+      >
+        <div
+          style={{
+            paddingTop: start * rowHeight,
+            paddingBottom: (rows.length - end) * rowHeight,
+          }}
+        >
+          {rows.slice(start, end).map(row)}
+        </div>
         {page.nodes.length === 0 && (
           <p className="muted">Здесь появятся объекты страницы.</p>
         )}
       </div>
     </aside>
   );
-}
+});
 const axes = [
   ["left", "По левому краю", AlignHorizontalJustifyStart],
   ["center", "По центру по горизонтали", AlignHorizontalJustifyCenter],
@@ -553,6 +614,25 @@ export function Inspector({
               />
             </div>
           </section>
+          {nodes.length === 1 && n.kind === "image" && (
+            <section>
+              <label className="stack">
+                Отображение изображения
+                <select
+                  aria-label="Отображение изображения"
+                  value={imageSampling(n)}
+                  onChange={(e) =>
+                    assign({
+                      sampling: e.target.value as DesignNode["sampling"],
+                    })
+                  }
+                >
+                  <option value="pixelated">Чёткие пиксели</option>
+                  <option value="auto">Сглаживание</option>
+                </select>
+              </label>
+            </section>
+          )}
           {n.kind === "text" && (
             <section>
               <h3>Текст</h3>
