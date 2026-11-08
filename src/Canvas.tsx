@@ -245,12 +245,14 @@ export function Canvas({
   setTool,
   space,
   grid,
+  onContextSelection,
 }: {
   page: DesignPage;
   tool: Tool;
   setTool: (t: Tool) => void;
   space: boolean;
   grid: boolean;
+  onContextSelection: (x: number, y: number, ids: string[]) => void;
 }) {
   const prefs = usePrefs();
   const lastTextTap = useRef({ id: "", time: 0, x: 0, y: 0 });
@@ -407,11 +409,12 @@ export function Canvas({
         }
       }
       if (n) {
-        const ids = e.shiftKey
-          ? toggleObject(page.nodes, selected, n.id)
-          : selected.includes(n.id)
-            ? selected
-            : [n.id];
+        const ids =
+          e.shiftKey || e.ctrlKey || e.metaKey
+            ? toggleObject(page.nodes, selected, n.id)
+            : selected.includes(n.id)
+              ? selected
+              : [n.id];
         studio.select(ids);
         if (!ids.length) return;
         const rootIds = roots(page.nodes, ids);
@@ -741,6 +744,22 @@ export function Canvas({
         onPointerMove={move}
         onPointerUp={up}
         onPointerCancel={up}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          const target = hit(e);
+          const chosen =
+            target &&
+            !inherited(page.nodes, target, "locked") &&
+            !inherited(page.nodes, target, "hidden")
+              ? target
+              : null;
+          const ids =
+            chosen && !descendants(page.nodes, selected).has(chosen.id)
+              ? [chosen.id]
+              : selected;
+          studio.select(ids);
+          if (ids.length) onContextSelection(e.clientX, e.clientY, ids);
+        }}
         onDoubleClick={(e) => {
           const n = hit(e);
           if (n?.kind === "text" && !inherited(page.nodes, n, "locked"))

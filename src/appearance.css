@@ -315,6 +315,7 @@
     .sidebar,
     .dialog,
     .dropdown,
+    .selection-context,
     .toolbar,
     .toolbar .toolstrip
   ) {

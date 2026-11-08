@@ -11,10 +11,12 @@ import {
 import {
   duplicateNodes,
   groupNodes,
+  liftNodes,
   moveNodes,
   proportionalResize,
   reparentNode,
   reorderNode,
+  separateToLayer,
   screenToWorld,
 } from "../src/core/geometry";
 import { exportSVG } from "../src/core/svg";
@@ -109,6 +111,30 @@ describe("Геометрия и формат", () => {
       [bChild.id, aChild.id],
     );
     expect(reorderNode(p, b.id, aChild.id, "after")).toBe(false);
+  });
+  it("отделяет выбранные детали в самостоятельный слой монтажной области", () => {
+    const p = newPage();
+    const frame = newNode("frame", 0, 0, 300, 200);
+    const original = newNode("group", 10, 10, 180, 100);
+    original.artLayer = true;
+    original.parentId = frame.id;
+    const mushroom = newNode("group", 20, 20, 70, 60);
+    mushroom.parentId = original.id;
+    const cap = newNode("vector", 20, 20, 40, 30);
+    const stem = newNode("rect", 30, 45, 15, 25);
+    const other = newNode("rect", 140, 25, 20, 20);
+    cap.parentId = stem.parentId = mushroom.id;
+    other.parentId = original.id;
+    p.nodes.push(frame, original, mushroom, cap, stem, other);
+    const layerId = separateToLayer(p, [cap.id, stem.id])!;
+    const layer = p.nodes.find((n) => n.id === layerId)!;
+    expect(layer).toMatchObject({ artLayer: true, parentId: frame.id });
+    expect(cap).toMatchObject({ parentId: layerId, x: 20, y: 20 });
+    expect(stem).toMatchObject({ parentId: layerId, x: 30, y: 45 });
+    expect(other.parentId).toBe(original.id);
+    expect(liftNodes(p, [cap.id, stem.id])).toEqual([cap.id, stem.id]);
+    expect(cap.parentId).toBe(frame.id);
+    expect(stem.parentId).toBe(frame.id);
   });
   it("сохраняет пропорции и противоположную опору при растяжении", () => {
     const original = { x: 10, y: 20, width: 80, height: 40 };

@@ -854,6 +854,99 @@ test("Группы вкладываются, а слои меняют поряд
   }
 });
 
+test("ПКМ отделяет несколько рисунков и слоёв без изменения остальных", async () => {
+  const app = await launch();
+  try {
+    const p = await app.firstWindow();
+    const doc = newDocument("Отделение рисунков");
+    const nodes = doc.pages[0].nodes;
+    const frame = newNode("frame", 0, 0, 300, 200);
+    const base = newNode("group", 10, 10, 170, 90);
+    base.name = "Основной слой";
+    base.artLayer = true;
+    base.parentId = frame.id;
+    const mushroom = newNode("group", 20, 20, 120, 55);
+    mushroom.name = "Гриб";
+    mushroom.parentId = base.id;
+    const cap = newNode("rect", 30, 30, 35, 30);
+    cap.name = "Шляпка";
+    cap.parentId = mushroom.id;
+    const stem = newNode("ellipse", 90, 30, 30, 30);
+    stem.name = "Ножка";
+    stem.parentId = mushroom.id;
+    const neighbor = newNode("group", 150, 30, 30, 30);
+    neighbor.name = "Соседний слой";
+    neighbor.artLayer = true;
+    neighbor.parentId = frame.id;
+    const other = newNode("rect", 150, 30, 30, 30);
+    other.name = "Сосед";
+    other.parentId = neighbor.id;
+    nodes.push(frame, base, mushroom, cap, stem, neighbor, other);
+    await p.evaluate((d) => window.gigma!.save(d, 0), doc);
+    await p.reload();
+    await p.getByRole("button", { name: /Отделение рисунков/ }).click();
+    const layer = (name: string) =>
+      p.getByRole("button", { name: "Выбрать слой " + name });
+    const saved = async () => {
+      await p.keyboard.press("Control+s");
+      await expect(
+        p.getByRole("status", { name: "Состояние сохранения" }),
+      ).toHaveText("Все изменения сохранены");
+      return p.evaluate(
+        async (id) => (await window.gigma!.load(id)).document.pages[0].nodes,
+        doc.id,
+      );
+    };
+    await p.getByRole("button", { name: "Прямое выделение" }).click();
+    const capShape = p.locator(`.surface [data-object="${cap.id}"] rect`);
+    const stemShape = p.locator(`.surface [data-object="${stem.id}"] ellipse`);
+    await capShape.click();
+    await stemShape.click({ modifiers: ["Shift"] });
+    await expect(p.locator(".layer-row.chosen .layer-name")).toHaveCount(2);
+    await capShape.click({ button: "right" });
+    await expect(
+      p.getByRole("menu", { name: "Действия с выделением" }),
+    ).toBeVisible();
+    await p.getByRole("menuitem", { name: "Отделить в новый слой" }).click();
+    let updated = await saved();
+    const separated = updated.find((n) => n.name === "Отделённый слой 1")!;
+    expect(separated).toMatchObject({ artLayer: true, parentId: frame.id });
+    expect(updated.find((n) => n.id === cap.id)).toMatchObject({
+      parentId: separated.id,
+      x: 30,
+      y: 30,
+    });
+    expect(updated.find((n) => n.id === stem.id)?.parentId).toBe(separated.id);
+    expect(updated.find((n) => n.id === other.id)?.parentId).toBe(neighbor.id);
+    await layer("Шляпка").click({ button: "right" });
+    await p.getByRole("menuitem", { name: "Вынести на уровень выше" }).click();
+    updated = await saved();
+    expect(updated.find((n) => n.id === cap.id)?.parentId).toBe(frame.id);
+    expect(updated.find((n) => n.id === stem.id)?.parentId).toBe(separated.id);
+    await p.keyboard.press("Control+z");
+    await p.keyboard.press("Control+z");
+    updated = await saved();
+    expect(updated.find((n) => n.id === cap.id)?.parentId).toBe(mushroom.id);
+    expect(updated.find((n) => n.id === stem.id)?.parentId).toBe(mushroom.id);
+    await layer("Гриб").click();
+    await layer("Соседний слой").click({ modifiers: ["Control"] });
+    await expect(p.locator(".layer-row.chosen .layer-name")).toHaveCount(2);
+    await layer("Гриб").click({ button: "right" });
+    await p.getByRole("menuitem", { name: "Отделить в новый слой" }).click();
+    updated = await saved();
+    const combined = updated.find((n) => n.name === "Отделённый слой 1")!;
+    expect(updated.find((n) => n.id === mushroom.id)?.parentId).toBe(
+      combined.id,
+    );
+    expect(updated.find((n) => n.id === neighbor.id)?.parentId).toBe(
+      combined.id,
+    );
+    expect(updated.find((n) => n.id === other.id)?.parentId).toBe(neighbor.id);
+  } finally {
+    await app.close();
+  }
+});
+
 test("Прямоугольник скругляется и сохраняется", async () => {
   const app = await launch();
   try {

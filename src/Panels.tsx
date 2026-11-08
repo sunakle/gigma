@@ -115,10 +115,12 @@ export const LayersPanel = memo(function LayersPanel({
   page,
   artworkVersion,
   selection,
+  onContextSelection,
 }: {
   page: DesignPage;
   artworkVersion: number;
   selection: string[];
+  onContextSelection: (x: number, y: number, ids: string[]) => void;
 }) {
   const [fold, setFold] = useState(new Set<string>()),
     doc = studio.document!;
@@ -291,6 +293,12 @@ export const LayersPanel = memo(function LayersPanel({
           const where = placement(e, n);
           drop(where === "inside" ? n.id : n.parentId, n.id, where);
         }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          const ids = selection.includes(n.id) ? selection : [n.id];
+          studio.select(ids);
+          onContextSelection(e.clientX, e.clientY, ids);
+        }}
       >
         {has ? (
           <button
@@ -325,7 +333,7 @@ export const LayersPanel = memo(function LayersPanel({
             )
               return;
             studio.select(
-              e.shiftKey
+              e.shiftKey || e.ctrlKey || e.metaKey
                 ? toggleObject(page.nodes, studio.selection, n.id)
                 : [n.id],
             );

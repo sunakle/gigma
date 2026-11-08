@@ -67,9 +67,11 @@ import {
   duplicateNodes,
   groupNodes,
   inherited,
+  liftNodes,
   moveNodes,
   removeNodes,
   roots,
+  separateToLayer,
   ungroupNodes,
   union,
 } from "./core/geometry";
@@ -113,6 +115,11 @@ export default function App() {
     [scale, setScale] = useState(1),
     [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [contextSelection, setContextSelection] = useState<{
+    x: number;
+    y: number;
+    ids: string[];
+  } | null>(null);
   const importInput = useRef<HTMLInputElement>(null),
     imageInput = useRef<HTMLInputElement>(null);
   const clip = useRef<{ ids: string[]; nodes: DesignNode[] } | null>(null);
@@ -123,6 +130,47 @@ export default function App() {
   const doc = studio.document,
     page = studio.page,
     sel = studio.selection;
+  const contextNodes =
+    contextSelection?.ids
+      .map((id) => page?.nodes.find((n) => n.id === id))
+      .filter((n): n is DesignNode => !!n) ?? [];
+  const contextEditable =
+    !!page &&
+    contextNodes.length > 0 &&
+    contextNodes.length === contextSelection?.ids.length &&
+    contextNodes.every(
+      (n) =>
+        !inherited(page.nodes, n, "locked") &&
+        !inherited(page.nodes, n, "hidden"),
+    );
+  function showContext(x: number, y: number, ids: string[]) {
+    setMenu(false);
+    setContextSelection({
+      x: Math.min(Math.max(8, x), Math.max(8, window.innerWidth - 240)),
+      y: Math.min(Math.max(8, y), Math.max(8, window.innerHeight - 116)),
+      ids,
+    });
+  }
+  function separateSelection(mode: "layer" | "up") {
+    const ids = contextSelection?.ids;
+    setContextSelection(null);
+    if (!page || !ids?.length || !contextEditable) return;
+    try {
+      let chosen: string[] = [];
+      studio.mutate(
+        mode === "layer" ? "Отделить в новый слой" : "Вынести из группы",
+        (_, activePage) => {
+          if (mode === "layer") {
+            const id = separateToLayer(activePage, ids);
+            chosen = id ? [id] : [];
+          } else chosen = liftNodes(activePage, ids);
+        },
+      );
+      if (chosen.length) studio.select(chosen);
+    } catch (error) {
+      report(error);
+    }
+  }
   useEffect(() => {
     const close = async () => {
       blurField();
@@ -168,6 +216,7 @@ export default function App() {
     setMenu(false);
     setPreview(null);
     setModal("");
+    setContextSelection(null);
     if (!d.revision) {
       if (studio.page?.nodes.length)
         requestAnimationFrame(() => {
@@ -406,6 +455,11 @@ export default function App() {
         return;
       }
       if (typing || home) return;
+      if (contextSelection && e.key === "Escape") {
+        e.preventDefault();
+        setContextSelection(null);
+        return;
+      }
       if (e.key === "Escape") {
         setMenu(false);
         setModal("");
@@ -744,6 +798,7 @@ export default function App() {
               page={page}
               artworkVersion={studio.artworkVersion}
               selection={sel}
+              onContextSelection={showContext}
             />
             <Canvas
               key={page.id}
@@ -752,6 +807,7 @@ export default function App() {
               setTool={setTool}
               space={space}
               grid={grid}
+              onContextSelection={showContext}
             />
             <Inspector page={page} brush={tool === "path"} />
           </div>
@@ -816,6 +872,42 @@ export default function App() {
             </div>
           )}
         </div>
+      )}
+      {contextSelection && (
+        <>
+          <div
+            className="context-back"
+            onPointerDown={() => setContextSelection(null)}
+          />
+          <div
+            className="selection-context"
+            role="menu"
+            aria-label="Действия с выделением"
+            style={{ left: contextSelection.x, top: contextSelection.y }}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            <div className="selection-context-title">
+              Выбрано: {contextSelection.ids.length}
+            </div>
+            <button
+              role="menuitem"
+              autoFocus
+              disabled={!contextEditable}
+              onClick={() => separateSelection("layer")}
+            >
+              <Group /> Отделить в новый слой
+            </button>
+            <button
+              role="menuitem"
+              disabled={
+                !contextEditable || !contextNodes.some((n) => n.parentId)
+              }
+              onClick={() => separateSelection("up")}
+            >
+              <Ungroup /> Вынести на уровень выше
+            </button>
+          </div>
+        </>
       )}
       <input
         hidden

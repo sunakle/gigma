@@ -232,6 +232,64 @@ export function reparentNode(
   refreshGroups(page.nodes);
   return true;
 }
+export function separateToLayer(page: DesignPage, ids: string[]) {
+  const byId = new Map(page.nodes.map((n) => [n.id, n]));
+  const selected = roots(page.nodes, ids)
+    .map((id) => byId.get(id))
+    .filter(
+      (n): n is DesignNode =>
+        !!n &&
+        !inherited(page.nodes, n, "locked") &&
+        !inherited(page.nodes, n, "hidden"),
+    );
+  if (!selected.length) return null;
+  const box = selectionBounds(
+    page.nodes,
+    selected.map((n) => n.id),
+  );
+  if (!box) return null;
+  const frameAncestors = (node: DesignNode) => {
+    const result: string[] = [];
+    let parent = node.parentId ? byId.get(node.parentId) : undefined;
+    while (parent) {
+      if (parent.kind === "frame") result.push(parent.id);
+      parent = parent.parentId ? byId.get(parent.parentId) : undefined;
+    }
+    return result;
+  };
+  const frame = frameAncestors(selected[0]).find((id) =>
+    selected.every((n) => frameAncestors(n).includes(id)),
+  );
+  const layer = newNode("group", box.x, box.y, box.width, box.height);
+  layer.artLayer = true;
+  layer.parentId = frame ?? null;
+  let number = 1;
+  while (page.nodes.some((n) => n.name === `Отделённый слой ${number}`))
+    number++;
+  layer.name = `Отделённый слой ${number}`;
+  page.nodes.push(layer);
+  for (const node of selected) node.parentId = layer.id;
+  refreshGroups(page.nodes);
+  return layer.id;
+}
+export function liftNodes(page: DesignPage, ids: string[]) {
+  const byId = new Map(page.nodes.map((n) => [n.id, n]));
+  const moved: string[] = [];
+  for (const id of roots(page.nodes, ids)) {
+    const node = byId.get(id);
+    if (
+      !node ||
+      !node.parentId ||
+      inherited(page.nodes, node, "locked") ||
+      inherited(page.nodes, node, "hidden")
+    )
+      continue;
+    node.parentId = byId.get(node.parentId)?.parentId ?? null;
+    moved.push(id);
+  }
+  if (moved.length) refreshGroups(page.nodes);
+  return moved;
+}
 export function reorderNode(
   page: DesignPage,
   id: string,

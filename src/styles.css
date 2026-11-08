@@ -861,6 +861,33 @@ select,
     11px "Segoe UI",
     sans-serif;
 }
+.context-back {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+.selection-context {
+  position: fixed;
+  z-index: 21;
+  width: 232px;
+  padding: 5px;
+  background: #fff;
+  color: #282830;
+  box-shadow: 0 10px 40px #16132645;
+  border: 1px solid #e2e1e6;
+  border-radius: 9px;
+}
+.selection-context-title {
+  color: #777984;
+  font-size: 11px;
+  padding: 7px 9px 5px;
+}
+.selection-context button {
+  width: 100%;
+  justify-content: flex-start;
+  padding: 8px 9px;
+  font-size: 12px;
+}
 .veil,
 .presentation {
   position: fixed;
